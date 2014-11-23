@@ -1,0 +1,19 @@
+## Interface: 60000
+## Title: ArtPad
+## Version: 8.3
+## X-SaveVersion: 1
+## X-ProtocolVersion: 1
+## Author: Dust of Turalyon
+## Notes: Shared Canavas
+## SavedVariables: ArtPad_Settings
+
+
+#@no-lib-strip@
+Libs\LibStub\Libstub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
+#@end-no-lib-strip@
+
+
+ArtPad.lua
