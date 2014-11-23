@@ -1,4 +1,4 @@
-﻿--[[
+--[[
 --
 --	ArtPad
 --	by Dust of Turalyon
@@ -17,8 +17,6 @@
 -- c()			-- Clear Canavas
 -- f(<r>,<g>,<b>,<a>)	-- Change to given color
 -- t(<x>,<y>,"<t>")	-- Draw text t with bottom left corner at (x,y)
-MODE = "GUILD";
-
 ArtPad =
 {
 -- [[ Version data from the TOC file ]]
@@ -35,6 +33,8 @@ events = {
 				["SaveVersion"]	= this.saveVersion;
 				["AdminOnly"]	= false; -- Ignore non-raid admins
 				["WarnClear"]	= true; -- Warn before clearing screen
+				["Mode"]		= "GUILD";
+				["Scale"]		= 1;
 			};
 			if not ArtPad_Settings then
 				ArtPad_Settings = ArtPad_Settings_Default;
@@ -61,8 +61,8 @@ events = {
 	["CHAT_MSG_ADDON"] =
 		function (this, prefix, message, disType, sender)			
 			if prefix == "ArtPad" and sender ~= UnitName("player") then
-				if (MODE == "GUILD" and disType == "GUILD") or (MODE == "RAID" and disType == "RAID") then
-					if MODE == "RAID" then
+				if (ArtPad_Settings["Mode"] == "GUILD" and disType == "GUILD") or (ArtPad_Settings["Mode"] == "RAID" and disType == "RAID") then
+					if ArtPad_Settings["Mode"] == "RAID" then
 						if not this:ValidateSender(sender) then
 							return;
 						end;
@@ -70,9 +70,9 @@ events = {
 				if not this.mainFrame:IsShown() and artpadLauncher then
 					artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
 				end
-				local x,y,a,b = string.match(message, "d%((%d+),(%d+),(%d+),(%d+)%)");
-				if x then
-					this:DrawLine(x,y,a,b);
+				local x,y,a,b,brushR,brushG,brushB,brushA = string.match(message, "d%((%d+),(%d+),(%d+),(%d+),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*)%)");
+				if x then					
+					this:DrawLine(x,y,a,b,{r=brushR,g=brushG,b=brushB,a=brushA});
 					return;
 				end;
 				local x,y = string.match(message, "c%((%d+),(%d+)%)");
@@ -87,11 +87,11 @@ events = {
 					return;
 				end;
 
-				local r,g,b,a = string.match(message, "f%((%d%.?%d*),(%d%.?%d*),(%d%.?%d*),(%d%.?%d*)%)");
-				if r then
-					this:SetColor(r,g,b,a);
-					return;
-				end;
+				--local r,g,b,a = string.match(message, "f%((%d%.?%d*),(%d%.?%d*),(%d%.?%d*),(%d%.?%d*)%)");
+				--if r then
+				--	this:SetColor(r,g,b,a);
+				--	return;
+				--end;
 
 				local x,y,t = string.match(message, "t%((%d+),(%d+),\"([^\"]+)\"%)");
 				if x then
@@ -148,31 +148,31 @@ buttons = {
 		function (frame, button, down)
 			local this = frame.pad; -- Static Method
 			this:SetColor(1,1,1,0.75);
-			this:SendColor(1,1,1,0.75);
+			--this:SendColor(1,1,1,0.75);
 		end;
 	["ColorGrey"] =
 		function (frame, button, down)
 			local this = frame.pad; -- Static Method
 			this:SetColor(0.5,0.5,0.5,0.75);
-			this:SendColor(0.5,0.5,0.5,0.75);
+			--this:SendColor(0.5,0.5,0.5,0.75);
 		end;
 	["ColorRed"] =
 		function (frame, button, down)
 			local this = frame.pad; -- Static Method
 			this:SetColor(1,0,0,0.75);
-			this:SendColor(1,0,0,0.75);
+			--this:SendColor(1,0,0,0.75);
 		end;
 	["ColorGreen"] =
 		function (frame, button, down)
 			local this = frame.pad; -- Static Method
 			this:SetColor(0,1,0,0.75);
-			this:SendColor(0,1,0,0.75);
+			--this:SendColor(0,1,0,0.75);
 		end;
 	["ColorBlue"] =
 		function (frame, button, down)
 			local this = frame.pad; -- Static Method
 			this:SetColor(0,0,1,0.75);
-			this:SendColor(0,0,1,0.75);
+			--this:SendColor(0,0,1,0.75);
 		end;
 };
 
@@ -222,7 +222,8 @@ OnLoad = function (this)
             icon = "Interface\\AddOns\\Artpad\\icon",
             OnClick = this.MiniMapClick,
             OnTooltipShow = function(tt)                
-                tt:AddLine("|cffffff00" .. "Click|r to toggle the Artpad window")
+                tt:AddLine("|cffffff00" .. "Left Click|r to toggle the Artpad window")
+                tt:AddLine("|cffffff00" .. "Right Click|r to toggle between raid and guild mode")
             end,
         })
         if LDBIcon then
@@ -241,7 +242,15 @@ MiniMapClick = function (clickedframe, button)
 		else
 			ArtPad.mainFrame:Show();
 		end
-	end;
+	else
+		if ArtPad_Settings["Mode"] == "GUILD" then
+			ArtPad_Settings["Mode"] = "RAID";
+			ArtPad:Message("ArtPad now raid/party wide only")
+		else
+			ArtPad_Settings["Mode"] = "GUILD";
+			ArtPad:Message("ArtPad now guild wide");
+		end
+	end
 end;
 -- [[ Frame Event Handling ]]
 OnEvent = function (frame, event, ...)
@@ -352,13 +361,13 @@ OnUpdate = function (frame, elapsed)
 	this.lastY = y;
 end;
 
-HandleMove = function (this, ...)
+HandleMove = function (this, x,y,oldX,oldY)
 	if this.state == "PAINT" then
-		this:DrawLine(...);
-		this:SendLine(...);
+		this:DrawLine(x,y,oldX,oldY,this.brushColor);
+		this:SendLine(x,y,oldX,oldY,this.brushColor);
 	elseif this.state == "CLEAR" then
-		this:ClearLine(...);
-		this:SendClear(...);
+		this:ClearLine(x,y,oldX,oldY);
+		this:SendClear(x,y,oldX,oldY);
 	end;
 end;
 
@@ -399,12 +408,12 @@ end;
 slashCommands = {
 	["guild"] = 
 		function (this)
-			MODE = "GUILD";
+			ArtPad_Settings["Mode"] = "GUILD";
 			this:Message("AP now in Guild mode");
 		end;
 	["raid"] =
 		function (this)
-			MODE = "RAID";
+			ArtPad_Settings["Mode"] = "RAID";
 			this:Message("AP now in Raid Mode");
 		end;
 	["show"] =
@@ -600,37 +609,33 @@ junkLines = {};
 mainTexts = {};
 junkTexts = {};
 
-SendLine = function (this, x, y, oldX, oldY)
+SendLine = function (this, x, y, oldX, oldY, brush)
 	if oldY and oldY then
-		SendAddonMessage("ArtPad", "d("..x..","..y..","..oldX..","..oldY..")", MODE);
-	else
-		--SendAddonMessage("ArtPad", "d("..x..","..y..")", "RAID");
+		SendAddonMessage("ArtPad", "d("..x..","..y..","..oldX..","..oldY..","..brush.r..","..brush.g..","..brush.b..","..brush.a..")", ArtPad_Settings["Mode"]);
 	end;
 end;
 
 SendClear = function (this, x, y, oldX, oldY)
 	if oldY and oldY then
-		SendAddonMessage("ArtPad", "c("..x..","..y..","..oldX..","..oldY..")", MODE);
+		SendAddonMessage("ArtPad", "c("..x..","..y..","..oldX..","..oldY..")", ArtPad_Settings["Mode"]);
 	elseif x and y then
-		SendAddonMessage("ArtPad", "c("..x..","..y..")", MODE);
+		SendAddonMessage("ArtPad", "c("..x..","..y..")", ArtPad_Settings["Mode"]);
 	else
-		SendAddonMessage("ArtPad", "c()", MODE);
+		SendAddonMessage("ArtPad", "c()", ArtPad_Settings["Mode"]);
 	end;
 end;
 
 SendColor = function (this, r, g, b, a)
-	SendAddonMessage("ArtPad", "f("..r..","..g..","..b..","..a..")", MODE);
+	SendAddonMessage("ArtPad", "f("..r..","..g..","..b..","..a..")", ArtPad_Settings["Mode"]);
 end;
 
 SendText = function (this, x, y, text)
-	SendAddonMessage("ArtPad", "t("..x..","..y..",\""..text.."\")", MODE);
+	SendAddonMessage("ArtPad", "t("..x..","..y..",\""..text.."\")", ArtPad_Settings["Mode"]);
 end;
 
-DrawLine = function (this, x, y, oldX, oldY)
+DrawLine = function (this, x, y, oldX, oldY, brush)
 	if oldX and oldY then
-		this:CreateLine(x,y, oldX, oldY);
-	else
-		--this:CreateLine(x,y);
+		this:CreateLine(x,y, oldX, oldY, brush);
 	end;
 end;
 
@@ -714,16 +719,16 @@ SetColor = function (this, r, g, b, a)
 	this.brushColorSample:SetTexture(r,g,b,a);
 end;
 
-SetTexColor = function (this, tex)
-	tex:SetVertexColor(this.brushColor.r,
-		this.brushColor.g,
-		this.brushColor.b,
-		this.brushColor.a);
+SetTexColor = function (this, tex, brush)
+	tex:SetVertexColor(brush.r,
+		brush.g,
+		brush.b,
+		brush.a);
 end;
 
 -- [[ Line Handling ]]
 -- Allocator
-CreateLine = function (this, x, y, a, b)
+CreateLine = function (this, x, y, a, b, brush)
 	local ix = math.floor(x);
 	local iy = math.floor(y);
 	local ia = math.floor(a);
@@ -740,13 +745,13 @@ CreateLine = function (this, x, y, a, b)
 	end
 
 	local pix;
-	if #(this.junkLines) > 0 then
-		pix = table.remove(this.junkLines); -- Recycling ftw!
-	else
-		pix = this.mainFrame:CreateTexture(nil, "OVERLAY");
-		pix:SetTexture("Interface\\AddOns\\ArtPad\\line.tga");
-	end;
-	this:SetTexColor(pix);
+	--if #(this.junkLines) > 0 then
+	--	pix = table.remove(this.junkLines); -- Recycling ftw!
+	--else
+	pix = this.mainFrame:CreateTexture(nil, "OVERLAY");
+	pix:SetTexture("Interface\\AddOns\\ArtPad\\line.tga");
+	--end;
+	this:SetTexColor(pix, brush);
 	pix:ClearAllPoints();
 
 	pix:SetPoint("CENTER", this.mainFrame, "BOTTOMLEFT", cx, cy);
