@@ -66,12 +66,12 @@ events = {
 						if not this:ValidateSender(sender) then
 							return;
 						end;
-					end;
-				if not this.mainFrame:IsShown() and artpadLauncher then
-					artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
-				end
+					end;				
 				local x,y,a,b,brushR,brushG,brushB,brushA = string.match(message, "d%((%d+),(%d+),(%d+),(%d+),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*)%)");
-				if x then					
+				if x then
+					if not this.mainFrame:IsShown() and artpadLauncher then
+						artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
+					end					
 					this:DrawLine(x,y,a,b,{r=brushR,g=brushG,b=brushB,a=brushA});
 					return;
 				end;
@@ -95,6 +95,9 @@ events = {
 
 				local x,y,t = string.match(message, "t%((%d+),(%d+),\"([^\"]+)\"%)");
 				if x then
+					if not this.mainFrame:IsShown() and artpadLauncher then
+						artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
+					end
 					this:CreateText(x,y,t);
 					return;
 				end;
