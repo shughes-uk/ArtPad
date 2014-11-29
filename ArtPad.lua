@@ -41,6 +41,7 @@ events = {
 			elseif ArtPad_Settings["SaveVersion"] < this.saveVersion then
 				ArtPad_Settings = ArtPad_Settings_Default;
 			end;
+			this.mainFrame:SetScale(ArtPad_Settings["Scale"])
 		end;
 	["PLAYER_LOGIN"] =
 		function (this)
@@ -488,7 +489,6 @@ end;
 
 mainFrameWidth = floor(GetScreenHeight()*100+.5)/100;--3840;
 mainFrameHeight = floor(GetScreenWidth()*100+.5)/100;--;2160;
-mainFrameScale = ArtPad_Settings["Scale"];
 
 
 mainFrame = nil;	-- For input/output
@@ -510,7 +510,7 @@ CreateFrames = function (this)
 	frameM:SetFrameStrata("BACKGROUND");
 	frameM:SetWidth(this.mainFrameWidth);
 	frameM:SetHeight(this.mainFrameHeight);
-	frameM:SetScale(ArtPad_Settings["Scale"]);
+	frameM:SetScale(1);
 	frameM:SetPoint("CENTER", 0, 0);
 	frameM:SetMovable(true);
 	frameM:SetClampedToScreen(true);
