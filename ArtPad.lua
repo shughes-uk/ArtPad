@@ -240,19 +240,21 @@ OnLoad = function (this)
 end;
 -- [[ Minimap Event]]
 MiniMapClick = function (clickedframe, button)
-	if button ~= "RightButton" then 
-		if ArtPad.mainFrame:IsShown() then
-			ArtPad.mainFrame:Hide();
+	if not InCombatLockdown() then
+		if button ~= "RightButton" then 
+			if ArtPad.mainFrame:IsShown() then
+				ArtPad.mainFrame:Hide();
+			else
+				ArtPad.mainFrame:Show();
+			end
 		else
-			ArtPad.mainFrame:Show();
-		end
-	else
-		if ArtPad_Settings["Mode"] == "GUILD" then
-			ArtPad_Settings["Mode"] = "RAID";
-			ArtPad:Message("ArtPad now raid/party wide only")
-		else
-			ArtPad_Settings["Mode"] = "GUILD";
-			ArtPad:Message("ArtPad now guild wide");
+			if ArtPad_Settings["Mode"] == "GUILD" then
+				ArtPad_Settings["Mode"] = "RAID";
+				ArtPad:Message("ArtPad now raid/party wide only")
+			else
+				ArtPad_Settings["Mode"] = "GUILD";
+				ArtPad:Message("ArtPad now guild wide");
+			end
 		end
 	end
 end;
