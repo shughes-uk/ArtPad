@@ -309,12 +309,14 @@ end;
 
 -- [[ Override Handling ]]
 OnShow = function (frame)
-	local this = frame.pad; -- Static Method
-	-- Set Override
-	for b, k in pairs(this.shortcuts) do
-		SetOverrideBindingClick(this.mainFrame, true, k, "ArtPad_MainFrame_"..b);
-	end;
-	artpadLauncher.icon = "Interface\\AddOns\\Artpad\\icon"
+	if  not InCombatLockdown() then
+		local this = frame.pad; -- Static Method
+		-- Set Override
+		for b, k in pairs(this.shortcuts) do
+			SetOverrideBindingClick(this.mainFrame, true, k, "ArtPad_MainFrame_"..b);
+		end;
+		artpadLauncher.icon = "Interface\\AddOns\\Artpad\\icon"
+	end
 end;
 
 OnHide = function (frame)
