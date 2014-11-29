@@ -488,7 +488,7 @@ end;
 
 mainFrameWidth = floor(GetScreenHeight()*100+.5)/100;--3840;
 mainFrameHeight = floor(GetScreenWidth()*100+.5)/100;--;2160;
-mainFrameScale = UIParent:GetScale();
+mainFrameScale = ArtPad_Settings["Scale"];
 
 
 mainFrame = nil;	-- For input/output
@@ -510,7 +510,7 @@ CreateFrames = function (this)
 	frameM:SetFrameStrata("BACKGROUND");
 	frameM:SetWidth(this.mainFrameWidth);
 	frameM:SetHeight(this.mainFrameHeight);
-	frameM:SetScale(this.mainFrameScale);
+	frameM:SetScale(ArtPad_Settings["Scale"]);
 	frameM:SetPoint("CENTER", 0, 0);
 	frameM:SetMovable(true);
 	frameM:SetClampedToScreen(true);
