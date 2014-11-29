@@ -46,8 +46,8 @@ events = {
 	["PLAYER_LOGIN"] =
 		function (this)
 			RegisterAddonMessagePrefix("ArtPad")
-			this.mainFrame:SetWidth(floor(GetScreenWidth()*100+.5)/100);
-			this.mainFrame:SetHeight(floor(GetScreenHeight()*100+.5)/100);
+			this.mainFrame:SetHeight(GetScreenHeight()/UIParent:GetEffectiveScale());
+			this.mainFrame:SetWidth(GetScreenWidth()/UIParent:GetEffectiveScale());
 		end;
 	["PLAYER_REGEN_DISABLED"] =
 		function (this)
@@ -487,8 +487,8 @@ end;
 
 -- [[ Frame Setup and handling ]]
 
-mainFrameWidth = floor(GetScreenHeight()*100+.5)/100;--3840;
-mainFrameHeight = floor(GetScreenWidth()*100+.5)/100;--;2160;
+mainFrameWidth = (floor(GetScreenHeight()*100+.5)/100)/UIParent:GetEffectiveScale();--3840;
+mainFrameHeight = (floor(GetScreenWidth()*100+.5)/100)/UIParent:GetEffectiveScale();--;2160;
 
 
 mainFrame = nil;	-- For input/output
