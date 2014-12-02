@@ -148,47 +148,21 @@ buttons = {
 				this.textInput:Show();
 			end;
 		end;
-	["ColorWhite"] =
+	["ColorPicker"] =
 		function (frame, button, down)
 			local this = frame.pad; -- Static Method
-			this:SetColor(1,1,1,0.75);
-			--this:SendColor(1,1,1,0.75);
-		end;
-	["ColorGrey"] =
-		function (frame, button, down)
-			local this = frame.pad; -- Static Method
-			this:SetColor(0.5,0.5,0.5,0.75);
-			--this:SendColor(0.5,0.5,0.5,0.75);
-		end;
-	["ColorRed"] =
-		function (frame, button, down)
-			local this = frame.pad; -- Static Method
-			this:SetColor(1,0,0,0.75);
-			--this:SendColor(1,0,0,0.75);
-		end;
-	["ColorGreen"] =
-		function (frame, button, down)
-			local this = frame.pad; -- Static Method
-			this:SetColor(0,1,0,0.75);
-			--this:SendColor(0,1,0,0.75);
-		end;
-	["ColorBlue"] =
-		function (frame, button, down)
-			local this = frame.pad; -- Static Method
-			this:SetColor(0,0,1,0.75);
-			--this:SendColor(0,0,1,0.75);
+			ColorPickerFrame:SetColorRGB( this.brushColor.r, this.brushColor.g, this.brushColor.b);
+			ColorPickerFrame.hasOpacity, ColorPickerFrame.opacity = (this.brushColor.a ~= nil), this.brushColor.a;
+			ColorPickerFrame.previousValues = {this.brushColor.r, this.brushColor.g, this.brushColor.b, this.brushColor.a};
+			ColorPickerFrame.func, ColorPickerFrame.opacityFunc, ColorPickerFrame.cancelFunc = 
+			this.ColorPicker_Callback, this.ColorPicker_Callback, this.ColorPicker_Callback;
+			ColorPickerFrame:Hide(); -- Need to run the OnShow handler.
+			ColorPickerFrame:Show();
 		end;
 };
 
 shortcuts = {
 	["Close"] = "ESCAPE";
-	["Clear"] = "C";
-	["Text"] = "T";
-	["ColorWhite"] = "1";
-	["ColorGrey"] = "2";
-	["ColorRed"] = "3";
-	["ColorGreen"] = "4";
-	["ColorBlue"] = "5";
 };
 
 
@@ -238,6 +212,7 @@ OnLoad = function (this)
 	-- NOT REENTRANT!
 	this.OnLoad = nil;
 end;
+
 -- [[ Minimap Event]]
 MiniMapClick = function (clickedframe, button)
 	if not InCombatLockdown() then
@@ -524,20 +499,16 @@ CreateFrames = function (this)
 	this.textInput = frameT;
 	this.textInput.pad = this;
 
-	frameT:SetPoint("BOTTOMLEFT", frameM, "BOTTOMLEFT", 5, 5);
-	frameT:SetPoint("TOPRIGHT", frameM, "BOTTOMLEFT", 205, 25);
-	frameT:SetFont("Fonts\\FRIZQT__.TTF",12);
+	frameT:SetPoint("BOTTOMLEFT", frameM, "TOP", -110, -100);
+	frameT:SetPoint("TOPRIGHT", frameM, "TOP", 110, -80);
+	frameT:SetFont("Fonts\\FRIZQT__.TTF",18);
 	frameT:Hide();
 
 	local t = frameM:CreateTexture(nil, "BACKGROUND");
 	t:SetTexture(0,0,0,0.5);
 	t:SetAllPoints(frameM);
 
-	local b = frameM:CreateTexture(nil, "ARTWORK");
-	b:SetPoint("TOPRIGHT", frameM, "TOPRIGHT", -10, -10);
-	b:SetWidth(10); b:SetHeight(10);
-	b:SetTexture(1,1,1,1);
-	this.brushColorSample = b;
+	
 
 	local a = frameM:CreateFontString(nil, "ARTWORK");
 	a:SetPoint("TOP", frameM, "TOP", 10, -10);
@@ -545,24 +516,92 @@ CreateFrames = function (this)
 	a:SetFont("Fonts\\FRIZQT__.TTF",16);
 	a:SetJustifyH("LEFT")
 	a:SetText("ArtPad v."..this.version);
-	local h = frameM:CreateFontString(nil, "ARTWORK");
-	h:SetPoint("TOP", frameM, "TOP", 10, -30);
-	h:SetTextColor(0.5, 0.5, 0.5, 0.5);
-	h:SetFont("Fonts\\FRIZQT__.TTF",12);
-	h:SetJustifyH("LEFT")
-	local hs = "";
-	for b, s in pairs(this.shortcuts) do
-		hs = hs .. "> " .. b .. ": ".. s .. "\n";
-	end;
-	h:SetText(hs);
 
-	-- Buttons (NOT REENTRANT!)
-	for b, f in pairs(this.buttons) do
-		local button = CreateFrame("Button", "ArtPad_MainFrame_"..b, frameM);
-		button:SetScript("OnClick", f);
-		button.pad = this;
-	end
 
+	--colorpicker_button	
+	--buttonframe
+	local cpicker_button = CreateFrame("Button", "cpicker_button", frameM);
+	cpicker_button:SetPoint("TOP", frameM, "TOP", 10, -40);
+	cpicker_button:SetWidth(100);
+	cpicker_button:SetHeight(40);
+	cpicker_button:SetText("Color Picker");
+	cpicker_button:SetScript("OnClick", this.buttons["ColorPicker"]);
+	cpicker_button.pad = this;
+	cpicker_button:SetNormalFontObject("GameFontNormalLarge");
+	--texture
+	local cpicker_button_tex = cpicker_button:CreateTexture(nil, "ARTWORK");
+	cpicker_button_tex:SetTexture(1,1,1,1);
+	cpicker_button_tex:SetAllPoints()
+	cpicker_button:SetNormalTexture(cpicker_button_tex);	
+	cpicker_button:SetHighlightTexture("Interface/Buttons/UI-Panel-Button-Highlight")
+	this.brushColorSample = cpicker_button_tex;
+
+	--text_button
+	--buttonframe
+	local text_button = CreateFrame("Button", "text_button", frameM)
+	text_button:SetPoint("TOP", frameM, "TOP", -110, -40)
+	text_button:SetWidth(100)
+	text_button:SetHeight(40)
+	text_button:SetScript("OnClick", this.buttons["Text"]);
+	text_button.pad = this;
+	text_button:SetText("Text")
+	text_button:SetNormalFontObject("GameFontNormalLarge")
+
+	--textures
+	local tb_ntex = text_button:CreateTexture()
+	tb_ntex:SetTexture("Interface/Buttons/UI-Panel-Button-Up")
+	tb_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
+	tb_ntex:SetAllPoints()	
+	text_button:SetNormalTexture(tb_ntex)
+	
+	local tb_htex = text_button:CreateTexture()
+	tb_htex:SetTexture("Interface/Buttons/UI-Panel-Button-Highlight")
+	tb_htex:SetTexCoord(0, 0.625, 0, 0.6875)
+	tb_htex:SetAllPoints()
+	text_button:SetHighlightTexture(tb_htex)
+	
+	local tb_ptex = text_button:CreateTexture()
+	tb_ptex:SetTexture("Interface/Buttons/UI-Panel-Button-Down")
+	tb_ptex:SetTexCoord(0, 0.625, 0, 0.6875)
+	tb_ptex:SetAllPoints()
+	text_button:SetPushedTexture(tb_ptex)
+
+	--clear_button
+	--buttonframe
+	local clear_button = CreateFrame("Button", "clear_button", frameM)
+	clear_button:SetPoint("TOP", frameM, "TOP", 130, -40)
+	clear_button:SetWidth(110)
+	clear_button:SetHeight(40)	
+	clear_button:SetText("Clear Canvas")
+	clear_button:SetNormalFontObject("GameFontNormalLarge")
+	clear_button:SetScript("OnClick", this.buttons["Clear"]);
+	clear_button.pad = this;
+	
+	--textures
+	local c_ntex = clear_button:CreateTexture()
+	c_ntex:SetTexture("Interface/Buttons/UI-Panel-Button-Up")
+	c_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
+	c_ntex:SetAllPoints()	
+	clear_button:SetNormalTexture(c_ntex)
+
+	
+	local c_htex = clear_button:CreateTexture()
+	c_htex:SetTexture("Interface/Buttons/UI-Panel-Button-Highlight")
+	c_htex:SetTexCoord(0, 0.625, 0, 0.6875)
+	c_htex:SetAllPoints()
+	clear_button:SetHighlightTexture(c_htex)
+	
+	local c_ptex = clear_button:CreateTexture()
+	c_ptex:SetTexture("Interface/Buttons/UI-Panel-Button-Down")
+	c_ptex:SetTexCoord(0, 0.625, 0, 0.6875)
+	c_ptex:SetAllPoints()
+	clear_button:SetPushedTexture(c_ptex)
+
+	--escape_button_thing
+	local escape_button = CreateFrame("Button", "ArtPad_MainFrame_Close", frameM);
+	escape_button:SetScript("OnClick", this.buttons["Close"]);
+	escape_button.pad = this;
+	
 	this.CreateFrames = nil;
 end;
 
@@ -607,6 +646,20 @@ FrameMouseUp = function (frame)
 	frame:StopMovingOrSizing();
 end;
 
+--[[ ColorPicker Handling ]]
+ColorPicker_Callback = function (restore)
+	local this = ArtPad;
+	local newR, newG, newB, newA;
+	if restore then
+	-- The user bailed, we extract the old color from the table created by ShowColorPicker.
+	newR, newG, newB, newA = unpack(restore);
+	else
+	-- Something changed
+	newA, newR, newG, newB = OpacitySliderFrame:GetValue(), ColorPickerFrame:GetColorRGB();
+	end;
+	-- update the brush
+	this:SetColor(newR,newG,newB,newA);
+end;
 -- [[ Drawing ]]
 
 brushColor = { r = 1.0; g = 1.0; b = 1.0; a = 0.75; };
