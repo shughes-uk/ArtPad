@@ -264,6 +264,45 @@ function ArtPad.OnMouseUp(frame, button)
 	self.state = "SLEEP";
 end;
 
+ArtPad.Desired_X_Ofs = 1;
+ArtPad.Desired_Y_Ofs = 1;
+ArtPad.Actual_X_Ofs = 0;
+ArtPad.Actual_Y_Ofs = 0;
+
+function ArtPad.OnMouseWheel(frame, delta)
+	local self = frame.pad; -- Static Method
+	local frameScale = self.mainFrame:GetScale();
+	local newScale = frameScale + (frameScale*0.10*delta) ;
+	if 100 > newScale and newScale > 0.01 then
+		local curmx, curmy = GetCursorPosition();
+		--mouse coords are subject to scaling because reasons
+		curmx = curmx/UIParent:GetScale();
+		curmy = curmy/UIParent:GetScale();	
+		if delta == 1 then			
+			self.CalcNewZoomOffset(curmx,curmy);
+		else 
+			self.Desired_X_Ofs = 0;
+			self.Desired_Y_Ofs = 0;
+		end
+		newx = self.Actual_X_Ofs - (self.Actual_X_Ofs - self.Desired_X_Ofs)*0.40
+		newy = self.Actual_Y_Ofs - (self.Actual_Y_Ofs - self.Desired_Y_Ofs)*0.40
+		self.mainFrame:SetPoint("CENTER", newx/newScale, newy/newScale);
+		self.Actual_Y_Ofs = newy;
+		self.Actual_X_Ofs = newx;
+		self.mainFrame:SetScale(newScale)
+		ArtPad_Settings["Scale"] = newScale
+	end
+end
+		
+function ArtPad.CalcNewZoomOffset(mx,my)
+	--magic math to work out how much we need to offset the center of the canvas by to make the zoom effect
+	local screen_Y_Center = (GetScreenHeight() * 0.5) ;
+	local screen_X_Center = (GetScreenWidth() * 0.5) ;
+	ArtPad.Desired_X_Ofs = screen_X_Center - mx + ArtPad.Actual_X_Ofs;
+	ArtPad.Desired_Y_Ofs = screen_Y_Center - my + ArtPad.Actual_Y_Ofs;	
+	return ArtPad.Desired_X_Ofs , ArtPad.Desired_Y_Ofs;
+end
+
 -- [[ Override Handling ]]
 function ArtPad.OnShow(frame)
 	if  not InCombatLockdown() then
@@ -278,6 +317,8 @@ function ArtPad.OnShow(frame)
 		self.text_button:Show()
 		self.cpicker_button:Show()
 		self.clear_button:Show()
+		self.secretFrame:Show()
+		self.versionText:Show()
 	end
 end;
 
@@ -289,6 +330,8 @@ function ArtPad.OnHide(frame)
 	self.cpicker_button:Hide()
 	self.textInput:Hide()
 	self.clear_button:Hide()
+	self.secretFrame:Hide()
+	self.versionText:Hide()
 end;
 
 -- [[ Tracking Functions ]]
@@ -318,7 +361,7 @@ function ArtPad.OnUpdate(frame, elapsed)
 		self.mouseY = my;
 	end;
 	local x, y;		-- Local coordinates
-	local scale = self.mainFrame:GetScale()*UIParent:GetScale();
+	local scale = self.mainFrame:GetScale();--*UIParent:GetScale();
 
 	mx = mx/scale;
 	my = my/scale;
@@ -469,12 +512,12 @@ function ArtPad:SetupMainFrame()
 	frameM:SetFrameStrata("BACKGROUND");
 	--frameM:SetWidth((floor(GetScreenWidth()*100+.5)/100));
 	--frameM:SetHeight((floor(GetScreenHeight()*100+.5)/100));
-	frameM:SetWidth(4096);
-	frameM:SetHeight(2160);
+	frameM:SetWidth(15360);
+	frameM:SetHeight(8640);
 	frameM:SetScale(ArtPad_Settings["Scale"]);
 	frameM:SetPoint("CENTER");
 	frameM:SetMovable(true);
-	frameM:SetClampedToScreen(true);
+	frameM:SetClampedToScreen(false);
 	frameM:Hide();
 
 	local frameT = CreateFrame("EditBox", nil, UIParent);
@@ -492,12 +535,13 @@ function ArtPad:SetupMainFrame()
 
 	
 
-	local a = frameM:CreateFontString(nil, "ARTWORK");
-	a:SetPoint("TOP", frameM, "TOP", 10, -10);
-	a:SetTextColor(0.5, 0.5, 0.5, 0.5);
-	a:SetFont("Fonts\\FRIZQT__.TTF",16);
-	a:SetJustifyH("LEFT")
-	a:SetText("ArtPad v."..self.version);
+	self.versionText = UIParent:CreateFontString(nil, "ARTWORK");
+	self.versionText:SetPoint("TOP", UIParent, "TOP", 10, -10);
+	--self.versionText:SetTextColor(0, 0, 0, 1);
+	self.versionText:SetFont("Fonts\\FRIZQT__.TTF",16);
+	self.versionText:SetJustifyH("LEFT")
+	self.versionText:SetText("ArtPad v."..self.version);
+	self.versionText:Hide()
 
 
 	--colorpicker_button	
@@ -591,7 +635,20 @@ function ArtPad:SetupMainFrame()
 	self.mainFrame:SetScript("OnEnter", self.OnEnter);
 	self.mainFrame:SetScript("OnLeave", self.OnLeave);
 
-	self.mainFrame:EnableMouse(true);
+	self.secretFrame = CreateFrame("Frame", nil, nil);
+	self.secretFrame:SetScript("OnMouseWheel", self.OnMouseWheel);
+	self.secretFrame:EnableMouseWheel(true);
+	self.secretFrame.pad = self;
+
+	self.secretFrame:SetWidth(4096);
+	self.secretFrame:SetHeight(2160);
+	self.secretFrame:SetScale(1);
+	self.secretFrame:SetPoint("CENTER");
+	self.secretFrame:SetClampedToScreen(false);
+	self.secretFrame:Hide()
+
+	self.mainFrame:EnableMouse(true);	
+
 	self.mainFrame:SetScript("OnMouseDown", self.OnMouseDown);
 	self.mainFrame:SetScript("OnMouseUp", self.OnMouseUp);
 
@@ -909,4 +966,3 @@ BINDING_NAME_ARTPAD_TOGGLE = "Toggle Art Window";
 
 ArtPad:SetUpEvents();
 
-print("POOTING")

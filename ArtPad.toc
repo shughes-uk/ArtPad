@@ -1,6 +1,6 @@
 ## Interface: 60000
 ## Title: ArtPad
-## Version: 8.5
+## Version: 8.6
 ## X-SaveVersion: 3
 ## X-ProtocolVersion: 1
 ## Author: Dust of Turalyon
