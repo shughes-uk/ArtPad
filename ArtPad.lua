@@ -272,7 +272,12 @@ function ArtPad.OnShow(frame)
 		for b, k in pairs(self.shortcuts) do
 			SetOverrideBindingClick(self.mainFrame, true, k, "ArtPad_MainFrame_"..b);
 		end;
+
 		artpadLauncher.icon = "Interface\\AddOns\\Artpad\\icon"
+
+		self.text_button:Show()
+		self.cpicker_button:Show()
+		self.clear_button:Show()
 	end
 end;
 
@@ -280,6 +285,10 @@ function ArtPad.OnHide(frame)
 	local self = frame.pad; -- Static Method
 	-- Clear Override
 	ClearOverrideBindings(self.mainFrame);
+	self.text_button:Hide()
+	self.cpicker_button:Hide()
+	self.textInput:Hide()
+	self.clear_button:Hide()
 end;
 
 -- [[ Tracking Functions ]]
@@ -452,21 +461,23 @@ ArtPad.textInput = nil;
 ArtPad.brushColorSample = nil;
 
 function ArtPad:SetupMainFrame()
-	local frameM = CreateFrame("Frame", nil, UIParent);
+	local frameM = CreateFrame("Frame", nil, nil);
 
 	self.mainFrame = frameM;
 	self.mainFrame.pad = self;
 
 	frameM:SetFrameStrata("BACKGROUND");
-	frameM:SetWidth((floor(GetScreenWidth()*100+.5)/100));
-	frameM:SetHeight((floor(GetScreenHeight()*100+.5)/100));
+	--frameM:SetWidth((floor(GetScreenWidth()*100+.5)/100));
+	--frameM:SetHeight((floor(GetScreenHeight()*100+.5)/100));
+	frameM:SetWidth(4096);
+	frameM:SetHeight(2160);
 	frameM:SetScale(ArtPad_Settings["Scale"]);
-	frameM:SetPoint("CENTER", 0, 0);
+	frameM:SetPoint("CENTER");
 	frameM:SetMovable(true);
 	frameM:SetClampedToScreen(true);
 	frameM:Hide();
 
-	local frameT = CreateFrame("EditBox", nil, frameM);
+	local frameT = CreateFrame("EditBox", nil, UIParent);
 	self.textInput = frameT;
 	self.textInput.pad = self;
 
@@ -491,14 +502,15 @@ function ArtPad:SetupMainFrame()
 
 	--colorpicker_button	
 	--buttonframe
-	local cpicker_button = CreateFrame("Button", "cpicker_button", frameM);
-	cpicker_button:SetPoint("TOP", frameM, "TOP", 10, -40);
-	cpicker_button:SetWidth(100);
-	cpicker_button:SetHeight(40);
-	cpicker_button:SetText("Color Picker");
-	cpicker_button:SetScript("OnClick", self.buttons["ColorPicker"]);
-	cpicker_button.pad = self;
-	cpicker_button:SetNormalFontObject("GameFontNormalLarge");
+	self.cpicker_button = CreateFrame("Button", "cpicker_button", UIParent);
+	self.cpicker_button:SetPoint("TOP", UIParent, "TOP", 10, -40);
+	self.cpicker_button:SetWidth(100);
+	self.cpicker_button:SetHeight(40);
+	self.cpicker_button:SetText("Color Picker");
+	self.cpicker_button:SetScript("OnClick", self.buttons["ColorPicker"]);
+	self.cpicker_button.pad = self;
+	self.cpicker_button:SetNormalFontObject("GameFontNormalLarge");
+	self.cpicker_button:Hide()
 	--texture
 	local cpicker_button_tex = cpicker_button:CreateTexture(nil, "ARTWORK");
 	cpicker_button_tex:SetTexture(1,1,1,1);
@@ -509,69 +521,72 @@ function ArtPad:SetupMainFrame()
 
 	--text_button
 	--buttonframe
-	local text_button = CreateFrame("Button", "text_button", frameM)
-	text_button:SetPoint("TOP", frameM, "TOP", -110, -40)
-	text_button:SetWidth(100)
-	text_button:SetHeight(40)
-	text_button:SetScript("OnClick", self.buttons["Text"]);
-	text_button.pad = self;
-	text_button:SetText("Text")
-	text_button:SetNormalFontObject("GameFontNormalLarge")
+	self.text_button = CreateFrame("Button", "text_button", UIParent)
+	self.text_button:SetPoint("TOP", UIParent, "TOP", -110, -40)
+	self.text_button:SetWidth(100)
+	self.text_button:SetHeight(40)
+	self.text_button:SetScript("OnClick", self.buttons["Text"]);
+	self.text_button.pad = self;
+	self.text_button:SetText("Text")
+	self.text_button:SetNormalFontObject("GameFontNormalLarge")
+	self.text_button:Hide()
 
 	--textures
-	local tb_ntex = text_button:CreateTexture()
+	local tb_ntex = self.text_button:CreateTexture()
 	tb_ntex:SetTexture("Interface/Buttons/UI-Panel-Button-Up")
 	tb_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
 	tb_ntex:SetAllPoints()	
-	text_button:SetNormalTexture(tb_ntex)
+	self.text_button:SetNormalTexture(tb_ntex)
 	
-	local tb_htex = text_button:CreateTexture()
+	local tb_htex = self.text_button:CreateTexture()
 	tb_htex:SetTexture("Interface/Buttons/UI-Panel-Button-Highlight")
 	tb_htex:SetTexCoord(0, 0.625, 0, 0.6875)
 	tb_htex:SetAllPoints()
-	text_button:SetHighlightTexture(tb_htex)
+	self.text_button:SetHighlightTexture(tb_htex)
 	
-	local tb_ptex = text_button:CreateTexture()
+	local tb_ptex = self.text_button:CreateTexture()
 	tb_ptex:SetTexture("Interface/Buttons/UI-Panel-Button-Down")
 	tb_ptex:SetTexCoord(0, 0.625, 0, 0.6875)
 	tb_ptex:SetAllPoints()
-	text_button:SetPushedTexture(tb_ptex)
+	self.text_button:SetPushedTexture(tb_ptex)
 
 	--clear_button
 	--buttonframe
-	local clear_button = CreateFrame("Button", "clear_button", frameM)
-	clear_button:SetPoint("TOP", frameM, "TOP", 130, -40)
-	clear_button:SetWidth(110)
-	clear_button:SetHeight(40)	
-	clear_button:SetText("Clear Canvas")
-	clear_button:SetNormalFontObject("GameFontNormalLarge")
-	clear_button:SetScript("OnClick", self.buttons["Clear"]);
-	clear_button.pad = self;
+	self.clear_button = CreateFrame("Button", "clear_button", UIParent)
+	self.clear_button:SetPoint("TOP", UIParent, "TOP", 130, -40)
+	self.clear_button:SetWidth(110)
+	self.clear_button:SetHeight(40)	
+	self.clear_button:SetText("Clear Canvas")
+	self.clear_button:SetNormalFontObject("GameFontNormalLarge")
+	self.clear_button:SetScript("OnClick", self.buttons["Clear"]);
+	self.clear_button.pad = self;
+	self.clear_button:Hide()
 	
 	--textures
-	local c_ntex = clear_button:CreateTexture()
+	local c_ntex = self.clear_button:CreateTexture()
 	c_ntex:SetTexture("Interface/Buttons/UI-Panel-Button-Up")
 	c_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
 	c_ntex:SetAllPoints()	
-	clear_button:SetNormalTexture(c_ntex)
+	self.clear_button:SetNormalTexture(c_ntex)
 
 	
-	local c_htex = clear_button:CreateTexture()
+	local c_htex = self.clear_button:CreateTexture()
 	c_htex:SetTexture("Interface/Buttons/UI-Panel-Button-Highlight")
 	c_htex:SetTexCoord(0, 0.625, 0, 0.6875)
 	c_htex:SetAllPoints()
-	clear_button:SetHighlightTexture(c_htex)
+	self.clear_button:SetHighlightTexture(c_htex)
 	
-	local c_ptex = clear_button:CreateTexture()
+	local c_ptex = self.clear_button:CreateTexture()
 	c_ptex:SetTexture("Interface/Buttons/UI-Panel-Button-Down")
 	c_ptex:SetTexCoord(0, 0.625, 0, 0.6875)
 	c_ptex:SetAllPoints()
-	clear_button:SetPushedTexture(c_ptex)
+	self.clear_button:SetPushedTexture(c_ptex)
 
 	--escape_button_thing
-	local escape_button = CreateFrame("Button", "ArtPad_MainFrame_Close", frameM);
-	escape_button:SetScript("OnClick", self.buttons["Close"]);
-	escape_button.pad = self;
+	self.escape_button = CreateFrame("Button", "ArtPad_MainFrame_Close", UIParent);
+	self.escape_button:SetScript("OnClick", self.buttons["Close"]);
+	self.escape_button.pad = self;
+	self.escape_button:Hide()
 	
 	self.mainFrame:SetScript("OnEnter", self.OnEnter);
 	self.mainFrame:SetScript("OnLeave", self.OnLeave);
