@@ -25,93 +25,90 @@ saveVersion = GetAddOnMetadata("ArtPad", "X-SaveVersion");
 protocolVersion = GetAddOnMetadata("ArtPad", "X-ProtocolVersion");
 }
 
--- [[ Event Handling ]]
-ArtPad.events = {
-	["VARIABLES_LOADED"] =
-		function (self)
-			local ArtPad_Settings_Default = {
+function ArtPad:Variables_Loaded()
+	local ArtPad_Settings_Default = {
 				["SaveVersion"]	= self.saveVersion;
 				["AdminOnly"]	= false; -- Ignore non-raid admins
 				["WarnClear"]	= true; -- Warn before clearing screen
 				["Mode"]		= "GUILD";
 				["Scale"]		= 1;
 			};
-			if not ArtPad_Settings then
-				ArtPad_Settings = ArtPad_Settings_Default;
-			elseif ArtPad_Settings["SaveVersion"] < self.saveVersion then
-				ArtPad_Settings = ArtPad_Settings_Default;
-			end;
-			self.mainFrame:SetScale(ArtPad_Settings["Scale"])
-		end;
-	["PLAYER_LOGIN"] =
-		function (self)
-			RegisterAddonMessagePrefix("ArtPad")
-			self.mainFrame:SetHeight(GetScreenHeight()/UIParent:GetEffectiveScale());
-			self.mainFrame:SetWidth(GetScreenWidth()/UIParent:GetEffectiveScale());
-		end;
-	["PLAYER_REGEN_DISABLED"] =
-		function (self)
-			-- Close window when entering combat
-			if self.mainFrame:IsShown() then
-				self.mainFrame:Hide();
-			end;
-		end;
-	["PLAYER_REGEN_ENABLED"] =
-		function (self)
-		end;
-	["CHAT_MSG_ADDON"] =
-		function (self, prefix, message, disType, sender)			
-			if prefix == "ArtPad" and sender ~= UnitName("player") then
-				if (ArtPad_Settings["Mode"] == "GUILD" and disType == "GUILD") or (ArtPad_Settings["Mode"] == "RAID" and disType == "RAID") then
-					if ArtPad_Settings["Mode"] == "RAID" then
-						if not self:ValidateSender(sender) then
-							return;
-						end;
-					end;				
-				local x,y,a,b,brushR,brushG,brushB,brushA = string.match(message, "d%((%d+),(%d+),(%d+),(%d+),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*)%)");
-				if x then
-					if not self.mainFrame:IsShown() and artpadLauncher then
-						artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
-					end					
-					self:DrawLine(x,y,a,b,{r=brushR,g=brushG,b=brushB,a=brushA});
-					return;
-				end;
-				local x,y = string.match(message, "c%((%d+),(%d+)%)");
-				if x then
-					self:ClearLine(x,y);
-					return;
-				end;
+	if not ArtPad_Settings then
+		ArtPad_Settings = ArtPad_Settings_Default;
+	elseif ArtPad_Settings["SaveVersion"] < self.saveVersion then
+		ArtPad_Settings = ArtPad_Settings_Default;
+	end;
+	self.mainFrame:SetScale(ArtPad_Settings["Scale"])
+end
 
-				local x,y,a,b = string.match(message, "c%((%d+),(%d+),(%d+),(%d+)%)");
-				if x then
-					self:ClearLine(x,y,a,b);
-					return;
-				end;
+function ArtPad:Player_Login()
+	RegisterAddonMessagePrefix("ArtPad")
+	self.mainFrame:SetHeight(GetScreenHeight()/UIParent:GetEffectiveScale());
+	self.mainFrame:SetWidth(GetScreenWidth()/UIParent:GetEffectiveScale());
+end
 
-				--local r,g,b,a = string.match(message, "f%((%d%.?%d*),(%d%.?%d*),(%d%.?%d*),(%d%.?%d*)%)");
-				--if r then
-				--	self:SetColor(r,g,b,a);
-				--	return;
-				--end;
+function ArtPad:Player_Regen_Disabled()
+	-- Close window when entering combat
+	if self.mainFrame:IsShown() then
+		self.mainFrame:Hide();
+	end;
+end;
 
-				local x,y,t = string.match(message, "t%((%d+),(%d+),\"([^\"]+)\"%)");
-				if x then
-					if not self.mainFrame:IsShown() and artpadLauncher then
-						artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
-					end
-					self:CreateText(x,y,t);
+function ArtPad:Chat_Msg_Addon(prefix, message, disType, Sender)
+	if prefix == "ArtPad" and sender ~= UnitName("player") then
+	-- Check security 
+		if (ArtPad_Settings["Mode"] == "GUILD" and disType == "GUILD") or (ArtPad_Settings["Mode"] == "RAID" and disType == "RAID") then
+			if ArtPad_Settings["Mode"] == "RAID" then
+				if not self:ValidateSender(sender) then
 					return;
-				end;
-
-				local a, b = string.find(message, "c%(%)");
-				if a then
-					self:ClearCanavas();
-					self:Message(sender .. " just cleared the canvas")
-					return;
-				end;
 				end;
 			end;
+		--draw a line				
+			local x,y,a,b,brushR,brushG,brushB,brushA = string.match(message, "d%((%d+),(%d+),(%d+),(%d+),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*)%)");
+			if x then
+				if not self.mainFrame:IsShown() and artpadLauncher then
+					artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
+				end					
+				self:DrawLine(x,y,a,b,{r=brushR,g=brushG,b=brushB,a=brushA});
+				return;
+			end;
+		--erase a point
+			local x,y = string.match(message, "c%((%d+),(%d+)%)");
+			if x then
+				self:ClearLine(x,y);
+				return;
+			end;
+		--erase a line
+			local x,y,a,b = string.match(message, "c%((%d+),(%d+),(%d+),(%d+)%)");
+			if x then
+				self:ClearLine(x,y,a,b);
+				return;
+			end;
+		--create text
+			local x,y,t = string.match(message, "t%((%d+),(%d+),\"([^\"]+)\"%)");
+			if x then
+				if not self.mainFrame:IsShown() and artpadLauncher then
+					artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
+				end
+				self:CreateText(x,y,t);
+				return;
+			end;
+		--wipe the canvas
+			local a, b = string.find(message, "c%(%)");
+			if a then
+				self:ClearCanavas();
+				self:Message(sender .. " just cleared the canvas")
+				return;
+			end;
 		end;
+	end;
+end;
+-- [[ Event Handling ]]
+ArtPad.events = {
+	["VARIABLES_LOADED"] = ArtPad.Variables_Loaded;
+	["PLAYER_LOGIN"] = ArtPad.Player_Login;
+	["PLAYER_REGEN_DISABLED"] = ArtPad.Player_Regen_Disabled;
+	["CHAT_MSG_ADDON"] = ArtPad.Chat_Msg_Addon;
 };
 
 -- [[ Event Management ]]
