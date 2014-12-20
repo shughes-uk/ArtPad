@@ -23,14 +23,14 @@ ArtPad =
 version = GetAddOnMetadata("ArtPad", "Version");
 saveVersion = GetAddOnMetadata("ArtPad", "X-SaveVersion");
 protocolVersion = GetAddOnMetadata("ArtPad", "X-ProtocolVersion");
-
+}
 
 -- [[ Event Handling ]]
-events = {
+ArtPad.events = {
 	["VARIABLES_LOADED"] =
-		function (this)
+		function (self)
 			local ArtPad_Settings_Default = {
-				["SaveVersion"]	= this.saveVersion;
+				["SaveVersion"]	= self.saveVersion;
 				["AdminOnly"]	= false; -- Ignore non-raid admins
 				["WarnClear"]	= true; -- Warn before clearing screen
 				["Mode"]		= "GUILD";
@@ -38,75 +38,75 @@ events = {
 			};
 			if not ArtPad_Settings then
 				ArtPad_Settings = ArtPad_Settings_Default;
-			elseif ArtPad_Settings["SaveVersion"] < this.saveVersion then
+			elseif ArtPad_Settings["SaveVersion"] < self.saveVersion then
 				ArtPad_Settings = ArtPad_Settings_Default;
 			end;
-			this.mainFrame:SetScale(ArtPad_Settings["Scale"])
+			self.mainFrame:SetScale(ArtPad_Settings["Scale"])
 		end;
 	["PLAYER_LOGIN"] =
-		function (this)
+		function (self)
 			RegisterAddonMessagePrefix("ArtPad")
-			this.mainFrame:SetHeight(GetScreenHeight()/UIParent:GetEffectiveScale());
-			this.mainFrame:SetWidth(GetScreenWidth()/UIParent:GetEffectiveScale());
+			self.mainFrame:SetHeight(GetScreenHeight()/UIParent:GetEffectiveScale());
+			self.mainFrame:SetWidth(GetScreenWidth()/UIParent:GetEffectiveScale());
 		end;
 	["PLAYER_REGEN_DISABLED"] =
-		function (this)
+		function (self)
 			-- Close window when entering combat
-			if this.mainFrame:IsShown() then
-				this.mainFrame:Hide();
+			if self.mainFrame:IsShown() then
+				self.mainFrame:Hide();
 			end;
 		end;
 	["PLAYER_REGEN_ENABLED"] =
-		function (this)
+		function (self)
 		end;
 	["CHAT_MSG_ADDON"] =
-		function (this, prefix, message, disType, sender)			
+		function (self, prefix, message, disType, sender)			
 			if prefix == "ArtPad" and sender ~= UnitName("player") then
 				if (ArtPad_Settings["Mode"] == "GUILD" and disType == "GUILD") or (ArtPad_Settings["Mode"] == "RAID" and disType == "RAID") then
 					if ArtPad_Settings["Mode"] == "RAID" then
-						if not this:ValidateSender(sender) then
+						if not self:ValidateSender(sender) then
 							return;
 						end;
 					end;				
 				local x,y,a,b,brushR,brushG,brushB,brushA = string.match(message, "d%((%d+),(%d+),(%d+),(%d+),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*)%)");
 				if x then
-					if not this.mainFrame:IsShown() and artpadLauncher then
+					if not self.mainFrame:IsShown() and artpadLauncher then
 						artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
 					end					
-					this:DrawLine(x,y,a,b,{r=brushR,g=brushG,b=brushB,a=brushA});
+					self:DrawLine(x,y,a,b,{r=brushR,g=brushG,b=brushB,a=brushA});
 					return;
 				end;
 				local x,y = string.match(message, "c%((%d+),(%d+)%)");
 				if x then
-					this:ClearLine(x,y);
+					self:ClearLine(x,y);
 					return;
 				end;
 
 				local x,y,a,b = string.match(message, "c%((%d+),(%d+),(%d+),(%d+)%)");
 				if x then
-					this:ClearLine(x,y,a,b);
+					self:ClearLine(x,y,a,b);
 					return;
 				end;
 
 				--local r,g,b,a = string.match(message, "f%((%d%.?%d*),(%d%.?%d*),(%d%.?%d*),(%d%.?%d*)%)");
 				--if r then
-				--	this:SetColor(r,g,b,a);
+				--	self:SetColor(r,g,b,a);
 				--	return;
 				--end;
 
 				local x,y,t = string.match(message, "t%((%d+),(%d+),\"([^\"]+)\"%)");
 				if x then
-					if not this.mainFrame:IsShown() and artpadLauncher then
+					if not self.mainFrame:IsShown() and artpadLauncher then
 						artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
 					end
-					this:CreateText(x,y,t);
+					self:CreateText(x,y,t);
 					return;
 				end;
 
 				local a, b = string.find(message, "c%(%)");
 				if a then
-					this:ClearCanavas();
-					this:Message(sender .. " just cleared the canvas")
+					self:ClearCanavas();
+					self:Message(sender .. " just cleared the canvas")
 					return;
 				end;
 				end;
@@ -115,90 +115,90 @@ events = {
 };
 
 -- [[ Event Management ]]
-RegisterEvents = function (this, eventList)
+function ArtPad:RegisterEvents(eventList)
 	for event, handler in pairs(eventList) do
-		this.eventFrame:RegisterEvent(event);
+		self.eventFrame:RegisterEvent(event);
 	end
 end;
 
-UnregisterEvents = function (this, eventList)
+function ArtPad:UnregisterEvents(eventList)
 	for event, handler in pairs(eventList) do
-		this.eventFrame:UnregisterEvent(event);
+		self.eventFrame:UnregisterEvent(event);
 	end
 end;
 
 -- [[ Button Handling ]]
-buttons = {
+ArtPad.buttons = {
 	["Close"] =
 		function (frame, button, down)
-			local this = frame.pad; -- Static Method
-			this.mainFrame:Hide();
+			local self = frame.pad; -- Static Method
+			self.mainFrame:Hide();
 		end;
 	["Clear"] =
 		function (frame, button, down)
-			local this = frame.pad; -- Static Method
-			this:ClearCanavas();
-			this:SendClear();
+			local self = frame.pad; -- Static Method
+			self:ClearCanavas();
+			self:SendClear();
 		end;
 	["Text"] =
 		function (frame, button, down)
-			local this = frame.pad; -- Static Method
-			if this.state == "SLEEP" then
-				this.textInput:SetText("");
-				this.textInput:Show();
+			local self = frame.pad; -- Static Method
+			if self.state == "SLEEP" then
+				self.textInput:SetText("");
+				self.textInput:Show();
 			end;
 		end;
 	["ColorPicker"] =
 		function (frame, button, down)
-			local this = frame.pad; -- Static Method
-			ColorPickerFrame:SetColorRGB( this.brushColor.r, this.brushColor.g, this.brushColor.b);
-			ColorPickerFrame.hasOpacity, ColorPickerFrame.opacity = (this.brushColor.a ~= nil), this.brushColor.a;
-			ColorPickerFrame.previousValues = {this.brushColor.r, this.brushColor.g, this.brushColor.b, this.brushColor.a};
+			local self = frame.pad; -- Static Method
+			ColorPickerFrame:SetColorRGB( self.brushColor.r, self.brushColor.g, self.brushColor.b);
+			ColorPickerFrame.hasOpacity, ColorPickerFrame.opacity = (self.brushColor.a ~= nil), self.brushColor.a;
+			ColorPickerFrame.previousValues = {self.brushColor.r, self.brushColor.g, self.brushColor.b, self.brushColor.a};
 			ColorPickerFrame.func, ColorPickerFrame.opacityFunc, ColorPickerFrame.cancelFunc = 
-			this.ColorPicker_Callback, this.ColorPicker_Callback, this.ColorPicker_Callback;
+			self.ColorPicker_Callback, self.ColorPicker_Callback, self.ColorPicker_Callback;
 			ColorPickerFrame:Hide(); -- Need to run the OnShow handler.
 			ColorPickerFrame:Show();
 		end;
 };
 
-shortcuts = {
+ArtPad.shortcuts = {
 	["Close"] = "ESCAPE";
 };
 
 
 -- [[ Load Event Handling ]]
-OnLoad = function (this)
+function ArtPad:OnLoad()
 	--Slash command
-	SlashCmdList["ARTPAD"] = this.OnSlashCommand;
+	SlashCmdList["ARTPAD"] = self.OnSlashCommand;
 	SLASH_ARTPAD1 = "/artpad";
 	SLASH_ARTPAD2 = "/ap";
 
-	this.mainFrame:SetScript("OnEnter", this.OnEnter);
-	this.mainFrame:SetScript("OnLeave", this.OnLeave);
+	self.mainFrame:SetScript("OnEnter", self.OnEnter);
+	self.mainFrame:SetScript("OnLeave", self.OnLeave);
 
-	--this.mainFrame:EnableKeyboard(true);
-	--this.mainFrame:SetScript("OnKeyDown", this.OnKeyDown);
-	--this.mainFrame:SetScript("OnKeyUp", this.OnKeyUp);
+	--self.mainFrame:EnableKeyboard(true);
+	--self.mainFrame:SetScript("OnKeyDown", self.OnKeyDown);
+	--self.mainFrame:SetScript("OnKeyUp", self.OnKeyUp);
 
-	this.mainFrame:EnableMouse(true);
-	this.mainFrame:SetScript("OnMouseDown", this.OnMouseDown);
-	this.mainFrame:SetScript("OnMouseUp", this.OnMouseUp);
+	self.mainFrame:EnableMouse(true);
+	self.mainFrame:SetScript("OnMouseDown", self.OnMouseDown);
+	self.mainFrame:SetScript("OnMouseUp", self.OnMouseUp);
 
-	this.mainFrame:SetScript("OnShow", this.OnShow);
-	this.mainFrame:SetScript("OnHide", this.OnHide);
+	self.mainFrame:SetScript("OnShow", self.OnShow);
+	self.mainFrame:SetScript("OnHide", self.OnHide);
 
-	this.textInput:SetScript("OnEnterPressed", this.OnTextEnter);
-	this.textInput:SetScript("OnEscapePressed", this.OnTextEscape);
+	self.textInput:SetScript("OnEnterPressed", self.OnTextEnter);
+	self.textInput:SetScript("OnEscapePressed", self.OnTextEscape);
 
-	this.eventFrame:SetScript("OnEvent", this.OnEvent);
-	this:RegisterEvents(this.events);
+	self.eventFrame:SetScript("OnEvent", self.OnEvent);
+	self:RegisterEvents(self.events);
 	local LDB = LibStub("LibDataBroker-1.1")
 	local LDBIcon = LibStub("LibDBIcon-1.0")
 	if LDB then
         artpadLauncher = LDB:NewDataObject("ArtPad", {
             type = "launcher",
             icon = "Interface\\AddOns\\Artpad\\icon",
-            OnClick = this.MiniMapClick,
+            OnClick = self.MiniMapClick,
             OnTooltipShow = function(tt)                
                 tt:AddLine("|cffffff00" .. "Left Click|r to toggle the Artpad window")
                 tt:AddLine("|cffffff00" .. "Right Click|r to toggle between raid and guild mode")
@@ -210,11 +210,11 @@ OnLoad = function (this)
         end
     end
 	-- NOT REENTRANT!
-	this.OnLoad = nil;
+	self.OnLoad = nil;
 end;
 
 -- [[ Minimap Event]]
-MiniMapClick = function (clickedframe, button)
+function ArtPad.MiniMapClick(clickedframe, button)
 	if not InCombatLockdown() then
 		if button ~= "RightButton" then 
 			if ArtPad.mainFrame:IsShown() then
@@ -234,23 +234,23 @@ MiniMapClick = function (clickedframe, button)
 	end
 end;
 -- [[ Frame Event Handling ]]
-OnEvent = function (frame, event, ...)
-	local this = frame.pad; -- Static Method
+function ArtPad.OnEvent(frame, event, ...)
+	local self = frame.pad; -- Static Method
 
-	if this.events[event] then
-		this.events[event](this, ...);
+	if self.events[event] then
+		self.events[event](self, ...);
 	else
-		this:Message("ArtPad Error: Unknown Event");
+		self:Message("ArtPad Error: Unknown Event");
 	end;
 end;
 
 -- [[ Keyboard Event Handling ]]
-OnKeyDown = function (frame, key)
-	local this = frame.pad; -- Static Method
+function ArtPad.OnKeyDown(frame, key)
+	local self = frame.pad; -- Static Method
 end;
 
 OnKeyUp = function (frame, key)
-	local this = frame.pad; -- Static Method
+	local self = frame.pad; -- Static Method
 	if (key == "ESCAPE") then
 		frame:Hide();
 	end;
@@ -259,114 +259,114 @@ end;
 -- [[ Mouse Event Handling ]]
 state = "SLEEP";
 
-OnMouseDown = function (frame, button)
-	local this = frame.pad; -- Static Method
-	if this.FrameMouseDown(frame) then
-		this.state = "FRAME";
-	elseif this.state == "SLEEP" then
+function ArtPad.OnMouseDown(frame, button)
+	local self = frame.pad; -- Static Method
+	if self.FrameMouseDown(frame) then
+		self.state = "FRAME";
+	elseif self.state == "SLEEP" then
 		if button == "LeftButton" then
-			this.state = "PAINT";
+			self.state = "PAINT";
 		else
-			this.state = "CLEAR";
+			self.state = "CLEAR";
 		end;
-	elseif this.state == "TEXT" then
-		this:CreateText(this.lastX, this.lastY,
-			this.textInput:GetText());
-		this:SendText(this.lastX, this.lastY,
-			this.textInput:GetText());
-		this.state = "SLEEP";
+	elseif self.state == "TEXT" then
+		self:CreateText(self.lastX, self.lastY,
+			self.textInput:GetText());
+		self:SendText(self.lastX, self.lastY,
+			self.textInput:GetText());
+		self.state = "SLEEP";
 	end;
 end;
 
-OnMouseUp = function (frame, button)
-	local this = frame.pad; -- Static Method
-	this.FrameMouseUp(frame);
-	this.state = "SLEEP";
+function ArtPad.OnMouseUp(frame, button)
+	local self = frame.pad; -- Static Method
+	self.FrameMouseUp(frame);
+	self.state = "SLEEP";
 end;
 
 -- [[ Override Handling ]]
-OnShow = function (frame)
+function ArtPad.OnShow(frame)
 	if  not InCombatLockdown() then
-		local this = frame.pad; -- Static Method
+		local self = frame.pad; -- Static Method
 		-- Set Override
-		for b, k in pairs(this.shortcuts) do
-			SetOverrideBindingClick(this.mainFrame, true, k, "ArtPad_MainFrame_"..b);
+		for b, k in pairs(self.shortcuts) do
+			SetOverrideBindingClick(self.mainFrame, true, k, "ArtPad_MainFrame_"..b);
 		end;
 		artpadLauncher.icon = "Interface\\AddOns\\Artpad\\icon"
 	end
 end;
 
-OnHide = function (frame)
-	local this = frame.pad; -- Static Method
+function ArtPad.OnHide(frame)
+	local self = frame.pad; -- Static Method
 	-- Clear Override
-	ClearOverrideBindings(this.mainFrame);
+	ClearOverrideBindings(self.mainFrame);
 end;
 
 -- [[ Tracking Functions ]]
-OnEnter = function (frame, motion)
-	local this = frame.pad; -- Static Method
-	this.mainFrame:SetScript("OnUpdate", this.OnUpdate);
+function ArtPad.OnEnter(frame, motion)
+	local self = frame.pad; -- Static Method
+	self.mainFrame:SetScript("OnUpdate", self.OnUpdate);
 end;
 
-OnLeave = function (frame, motion)
-	local this = frame.pad; -- Static Method
-	this.mainFrame:SetScript("OnUpdate", nil);
-	this.state = "SLEEP";
-	this.lastX = nil;
-	this.lastY = nil;
+function ArtPad.OnLeave(frame, motion)
+	local self = frame.pad; -- Static Method
+	self.mainFrame:SetScript("OnUpdate", nil);
+	self.state = "SLEEP";
+	self.lastX = nil;
+	self.lastY = nil;
 
 end;
 
-mouseX = -1;
-mouseY = -1;
-OnUpdate = function (frame, elapsed)
-	local this = frame.pad; -- Static Method
+ArtPad.mouseX = -1;
+ArtPad.mouseY = -1;
+function ArtPad.OnUpdate(frame, elapsed)
+	local self = frame.pad; -- Static Method
 	local mx, my = GetCursorPosition();
-	if mx == this.mouseX and my == this.mouseY then
+	if mx == self.mouseX and my == self.mouseY then
 		return;
 	else
-		this.mouseX = mx;
-		this.mouseY = my;
+		self.mouseX = mx;
+		self.mouseY = my;
 	end;
 	local x, y;		-- Local coordinates
-	local scale = this.mainFrame:GetScale()*UIParent:GetScale();
+	local scale = self.mainFrame:GetScale()*UIParent:GetScale();
 
 	mx = mx/scale;
 	my = my/scale;
-	x = math.floor(mx - this.mainFrame:GetLeft());
-	y = math.floor(my - this.mainFrame:GetBottom());
+	x = math.floor(mx - self.mainFrame:GetLeft());
+	y = math.floor(my - self.mainFrame:GetBottom());
 
-	if this.state ~= "SLEEP" then
-		this:HandleMove(x, y, this.lastX, this.lastY);
+	if self.state ~= "SLEEP" then
+		self:HandleMove(x, y, self.lastX, self.lastY);
 	end;
 
-	this.lastX = x;
-	this.lastY = y;
+	self.lastX = x;
+	self.lastY = y;
 end;
 
-HandleMove = function (this, x,y,oldX,oldY)
-	if this.state == "PAINT" then
-		this:DrawLine(x,y,oldX,oldY,this.brushColor);
-		this:SendLine(x,y,oldX,oldY,this.brushColor);
-	elseif this.state == "CLEAR" then
-		this:ClearLine(x,y,oldX,oldY);
-		this:SendClear(x,y,oldX,oldY);
+function ArtPad:HandleMove(x,y,oldX,oldY)
+	if self.state == "PAINT" then
+		self:DrawLine(x,y,oldX,oldY,self.brushColor);
+		self:SendLine(x,y,oldX,oldY,self.brushColor);
+	elseif self.state == "CLEAR" then
+		self:ClearLine(x,y,oldX,oldY);
+		self:SendClear(x,y,oldX,oldY);
 	end;
 end;
 
-OnTextEnter = function (frame)
-	local this = frame.pad; -- Static Method
-	this.state = "TEXT";
+function ArtPad.OnTextEnter(frame)
+	local self = frame.pad; -- Static Method
+	self.state = "TEXT";
 	frame:Hide();
 end;
 
-OnTextEscape = function (frame)
-	local this = frame.pad; -- Static Method
+function ArtPad.OnTextEscape(frame)
+	local self = frame.pad; -- Static Method
 	frame:Hide();
 end;
 
 -- [[ Authorisation ]]
-ValidateSender = function (this, sender)
+function ArtPad:ValidateSender(sender)
 	if ArtPad_Settings["AdminOnly"] then
 		-- Check if sender is a raid admin
 		local num = GetNumGroupMembers()
@@ -388,39 +388,39 @@ ValidateSender = function (this, sender)
 	end;
 end;
 
-slashCommands = {
+ArtPad.slashCommands = {
 	["guild"] = 
-		function (this)
+		function (self)
 			ArtPad_Settings["Mode"] = "GUILD";
-			this:Message("AP now in Guild mode");
+			self:Message("AP now in Guild mode");
 		end;
 	["raid"] =
-		function (this)
+		function (self)
 			ArtPad_Settings["Mode"] = "RAID";
-			this:Message("AP now in Raid Mode");
+			self:Message("AP now in Raid Mode");
 		end;
 	["show"] =
-		function (this)
-			this.mainFrame:Show();
+		function (self)
+			self.mainFrame:Show();
 		end;
 	["hide"] =
-		function (this)
-			this.mainFrame:Hide();
+		function (self)
+			self.mainFrame:Hide();
 		end;
 	["toggle"] =
-		function (this)
-			if this.mainFrame:IsShown() then
-				this.mainFrame:Hide();
+		function (self)
+			if self.mainFrame:IsShown() then
+				self.mainFrame:Hide();
 			else
-				this.mainFrame:Show();
+				self.mainFrame:Show();
 			end;
 		end;
 	["clear"] =
-		function (this)
-			this:ClearCanavas();
+		function (self)
+			self:ClearCanavas();
 		end;
 	["adminonly"] =
-		function (this, state)
+		function (self, state)
 			-- TODO: Generalize
 			-- Set
 			if state == "off" or state == "false" then
@@ -435,60 +435,60 @@ slashCommands = {
 				end;
 			end;
 			if ArtPad_Settings["AdminOnly"] then
-				this:Message("ArtPad: AdminOnly enabled");
+				self:Message("ArtPad: AdminOnly enabled");
 			else
-				this:Message("ArtPad: AdminOnly disabled");
+				self:Message("ArtPad: AdminOnly disabled");
 			end;
 		end;
 };
 
-OnSlashCommand = function (msg)
-	local this = ArtPad; -- Static Method
+function ArtPad.OnSlashCommand(msg)
+	local self = ArtPad; -- Static Method
 	local cmd, arg = string.match(msg, "^(%a*)%s*(.*)$");
 	if cmd then
 		cmd = string.lower(cmd);
-		if this.slashCommands[cmd] then
-			this.slashCommands[cmd](this, arg);
+		if self.slashCommands[cmd] then
+			self.slashCommands[cmd](self, arg);
 		else
-			this:Message("ArtPad:");
-			this:Message("/ap [show | hide | toggle | clear]");
-			this:Message("/ap [adminonly]");
-			this:Message("/ap guild");
-			this:Message("/ap raid");
+			self:Message("ArtPad:");
+			self:Message("/ap [show | hide | toggle | clear]");
+			self:Message("/ap [adminonly]");
+			self:Message("/ap guild");
+			self:Message("/ap raid");
 		end;
 	end;
 end;
 
 -- [[ Misc ]]
-Message = function (this, msg)
+function ArtPad:Message(msg)
 	DEFAULT_CHAT_FRAME:AddMessage(msg);
 end;
 
 -- [[ Frame Setup and handling ]]
 
-mainFrameWidth = (floor(GetScreenHeight()*100+.5)/100)/UIParent:GetEffectiveScale();--3840;
-mainFrameHeight = (floor(GetScreenWidth()*100+.5)/100)/UIParent:GetEffectiveScale();--;2160;
+ArtPad.mainFrameWidth = (floor(GetScreenHeight()*100+.5)/100)/UIParent:GetEffectiveScale();--3840;
+ArtPad.mainFrameHeight = (floor(GetScreenWidth()*100+.5)/100)/UIParent:GetEffectiveScale();--;2160;
 
 
-mainFrame = nil;	-- For input/output
-eventFrame = nil;	-- For event processing
+ArtPad.mainFrame = nil;	-- For input/output
+ArtPad.eventFrame = nil;	-- For event processing
 
-textInput = nil;
+ArtPad.textInput = nil;
 
-brushColorSample = nil;
+ArtPad.brushColorSample = nil;
 
-CreateFrames = function (this)
+function ArtPad:CreateFrames()
 	local frameM = CreateFrame("Frame", nil, UIParent);
 	local frameE = CreateFrame("Frame", nil, UIParent);
 
-	this.mainFrame = frameM;
-	this.mainFrame.pad = this;
-	this.eventFrame = frameE;
-	this.eventFrame.pad = this;
+	self.mainFrame = frameM;
+	self.mainFrame.pad = self;
+	self.eventFrame = frameE;
+	self.eventFrame.pad = self;
 
 	frameM:SetFrameStrata("BACKGROUND");
-	frameM:SetWidth(this.mainFrameWidth);
-	frameM:SetHeight(this.mainFrameHeight);
+	frameM:SetWidth(self.mainFrameWidth);
+	frameM:SetHeight(self.mainFrameHeight);
 	frameM:SetScale(1);
 	frameM:SetPoint("CENTER", 0, 0);
 	frameM:SetMovable(true);
@@ -496,8 +496,8 @@ CreateFrames = function (this)
 	frameM:Hide();
 
 	local frameT = CreateFrame("EditBox", nil, frameM);
-	this.textInput = frameT;
-	this.textInput.pad = this;
+	self.textInput = frameT;
+	self.textInput.pad = self;
 
 	frameT:SetPoint("BOTTOMLEFT", frameM, "TOP", -110, -100);
 	frameT:SetPoint("TOPRIGHT", frameM, "TOP", 110, -80);
@@ -515,7 +515,7 @@ CreateFrames = function (this)
 	a:SetTextColor(0.5, 0.5, 0.5, 0.5);
 	a:SetFont("Fonts\\FRIZQT__.TTF",16);
 	a:SetJustifyH("LEFT")
-	a:SetText("ArtPad v."..this.version);
+	a:SetText("ArtPad v."..self.version);
 
 
 	--colorpicker_button	
@@ -525,8 +525,8 @@ CreateFrames = function (this)
 	cpicker_button:SetWidth(100);
 	cpicker_button:SetHeight(40);
 	cpicker_button:SetText("Color Picker");
-	cpicker_button:SetScript("OnClick", this.buttons["ColorPicker"]);
-	cpicker_button.pad = this;
+	cpicker_button:SetScript("OnClick", self.buttons["ColorPicker"]);
+	cpicker_button.pad = self;
 	cpicker_button:SetNormalFontObject("GameFontNormalLarge");
 	--texture
 	local cpicker_button_tex = cpicker_button:CreateTexture(nil, "ARTWORK");
@@ -534,7 +534,7 @@ CreateFrames = function (this)
 	cpicker_button_tex:SetAllPoints()
 	cpicker_button:SetNormalTexture(cpicker_button_tex);	
 	cpicker_button:SetHighlightTexture("Interface/Buttons/UI-Panel-Button-Highlight")
-	this.brushColorSample = cpicker_button_tex;
+	self.brushColorSample = cpicker_button_tex;
 
 	--text_button
 	--buttonframe
@@ -542,8 +542,8 @@ CreateFrames = function (this)
 	text_button:SetPoint("TOP", frameM, "TOP", -110, -40)
 	text_button:SetWidth(100)
 	text_button:SetHeight(40)
-	text_button:SetScript("OnClick", this.buttons["Text"]);
-	text_button.pad = this;
+	text_button:SetScript("OnClick", self.buttons["Text"]);
+	text_button.pad = self;
 	text_button:SetText("Text")
 	text_button:SetNormalFontObject("GameFontNormalLarge")
 
@@ -574,8 +574,8 @@ CreateFrames = function (this)
 	clear_button:SetHeight(40)	
 	clear_button:SetText("Clear Canvas")
 	clear_button:SetNormalFontObject("GameFontNormalLarge")
-	clear_button:SetScript("OnClick", this.buttons["Clear"]);
-	clear_button.pad = this;
+	clear_button:SetScript("OnClick", self.buttons["Clear"]);
+	clear_button.pad = self;
 	
 	--textures
 	local c_ntex = clear_button:CreateTexture()
@@ -599,13 +599,13 @@ CreateFrames = function (this)
 
 	--escape_button_thing
 	local escape_button = CreateFrame("Button", "ArtPad_MainFrame_Close", frameM);
-	escape_button:SetScript("OnClick", this.buttons["Close"]);
-	escape_button.pad = this;
+	escape_button:SetScript("OnClick", self.buttons["Close"]);
+	escape_button.pad = self;
 	
-	this.CreateFrames = nil;
+	self.CreateFrames = nil;
 end;
 
-FrameMouseDown = function (frame)
+function ArtPad.FrameMouseDown(frame)
 	if (IsShiftKeyDown()) then
 		frame:StartMoving();
 		return true;
@@ -642,13 +642,13 @@ FrameMouseDown = function (frame)
 	return false;
 end;
 
-FrameMouseUp = function (frame)
+function ArtPad.FrameMouseUp(frame)
 	frame:StopMovingOrSizing();
 end;
 
 --[[ ColorPicker Handling ]]
-ColorPicker_Callback = function (restore)
-	local this = ArtPad;
+function ArtPad.ColorPicker_Callback(restore)
+	local self = ArtPad;
 	local newR, newG, newB, newA;
 	if restore then
 	-- The user bailed, we extract the old color from the table created by ShowColorPicker.
@@ -658,24 +658,24 @@ ColorPicker_Callback = function (restore)
 	newA, newR, newG, newB = OpacitySliderFrame:GetValue(), ColorPickerFrame:GetColorRGB();
 	end;
 	-- update the brush
-	this:SetColor(newR,newG,newB,newA);
+	self:SetColor(newR,newG,newB,newA);
 end;
 -- [[ Drawing ]]
 
-brushColor = { r = 1.0; g = 1.0; b = 1.0; a = 0.75; };
+ArtPad.brushColor = { r = 1.0; g = 1.0; b = 1.0; a = 0.75; };
 
-mainLines = {};
-junkLines = {};
-mainTexts = {};
-junkTexts = {};
+ArtPad.mainLines = {};
+ArtPad.junkLines = {};
+ArtPad.mainTexts = {};
+ArtPad.junkTexts = {};
 
-SendLine = function (this, x, y, oldX, oldY, brush)
+function ArtPad:SendLine(x, y, oldX, oldY, brush)
 	if oldY and oldY then
 		SendAddonMessage("ArtPad", "d("..x..","..y..","..oldX..","..oldY..","..brush.r..","..brush.g..","..brush.b..","..brush.a..")", ArtPad_Settings["Mode"]);
 	end;
 end;
 
-SendClear = function (this, x, y, oldX, oldY)
+function ArtPad:SendClear(x, y, oldX, oldY)
 	if oldY and oldY then
 		SendAddonMessage("ArtPad", "c("..x..","..y..","..oldX..","..oldY..")", ArtPad_Settings["Mode"]);
 	elseif x and y then
@@ -685,55 +685,55 @@ SendClear = function (this, x, y, oldX, oldY)
 	end;
 end;
 
-SendColor = function (this, r, g, b, a)
+function ArtPad:SendColor(r, g, b, a)
 	SendAddonMessage("ArtPad", "f("..r..","..g..","..b..","..a..")", ArtPad_Settings["Mode"]);
 end;
 
-SendText = function (this, x, y, text)
+function ArtPad:SendText(x, y, text)
 	SendAddonMessage("ArtPad", "t("..x..","..y..",\""..text.."\")", ArtPad_Settings["Mode"]);
 end;
 
-DrawLine = function (this, x, y, oldX, oldY, brush)
+function ArtPad:DrawLine(x, y, oldX, oldY, brush)
 	if oldX and oldY then
-		this:CreateLine(x,y, oldX, oldY, brush);
+		self:CreateLine(x,y, oldX, oldY, brush);
 	end;
 end;
 
-ClearLine = function (this, x, y, oldX, oldY)
-	for i = #this.mainLines, 1, -1 do
-		local px = this.mainLines[i]["lax"];
-		local py = this.mainLines[i]["lay"];
-		local qx = this.mainLines[i]["lbx"];
-		local qy = this.mainLines[i]["lby"];
+function ArtPad:ClearLine(x, y, oldX, oldY)
+	for i = #self.mainLines, 1, -1 do
+		local px = self.mainLines[i]["lax"];
+		local py = self.mainLines[i]["lay"];
+		local qx = self.mainLines[i]["lbx"];
+		local qy = self.mainLines[i]["lby"];
 		-- TODO: Don't only check for intersections, but also min distance
 		-- http://www.softsurfer.com/Archive/algorithm_0106/algorithm_0106.htm
-		if this:LineLineIntersect(x,y,oldX,oldY,px,py,qx,qy) then
-			this:JunkLine(i);
+		if self:LineLineIntersect(x,y,oldX,oldY,px,py,qx,qy) then
+			self:JunkLine(i);
 		end;
 	end;
-	for i = #this.mainTexts, 1, -1 do
-		local px = this.mainTexts[i]["lax"];
-		local py = this.mainTexts[i]["lay"];
-		local qx = this.mainTexts[i]["lbx"];
-		local qy = this.mainTexts[i]["lby"];
-		if this:LineLineIntersect(x,y,oldX,oldY,px,py,qx,qy) then
-			this:JunkText(i);
+	for i = #self.mainTexts, 1, -1 do
+		local px = self.mainTexts[i]["lax"];
+		local py = self.mainTexts[i]["lay"];
+		local qx = self.mainTexts[i]["lbx"];
+		local qy = self.mainTexts[i]["lby"];
+		if self:LineLineIntersect(x,y,oldX,oldY,px,py,qx,qy) then
+			self:JunkText(i);
 		end;
 	end;
 end;
 
-PointPointDist = function (this, px, py, qx, qy)
+function ArtPad:PointPointDist(px, py, qx, qy)
 	return math.sqrt(math.pow(px-qx,2) + math.pow(py-qy,2));
 end;
 
-LinePointDist = function (this, lax, lay, lbx, lby, px, py)
+function ArtPad:LinePointDist(lax, lay, lbx, lby, px, py)
 	-- http://www.softsurfer.com/Archive/algorithm_0102/algorithm_0102.htm
 	-- Note: Not working
 	return math.abs((lay-lby)*px+(lbx-lax)*py+(lax*lby-lbx*lay)/
 		math.sqrt(math.pow(lbx-lax,2)+math.pow(lby-lay,2)));
 end;
 
-LineLineIntersect = function (this, ax0, ay0, ax1, ay1, bx0, by0, bx1, by1)
+function ArtPad:LineLineIntersect(ax0, ay0, ax1, ay1, bx0, by0, bx1, by1)
 	--http://www.softsurfer.com/Archive/algorithm_0104/algorithm_0104B.htm#intersect2D_SegSeg()
 	local ux, uy = ax1-ax0, ay1-ay0;
 	local vx, vy = bx1-bx0, by1-by0;
@@ -759,27 +759,27 @@ LineLineIntersect = function (this, ax0, ay0, ax1, ay1, bx0, by0, bx1, by1)
 end;
 
 -- A square brush
-ClearCanavas = function (this)
+function ArtPad:ClearCanavas()
 	if ArtPad_Settings["WarnClear"] then
 		-- TODO: Ask for permission to clear
 	end;
-	for i = #this.mainLines, 1, -1 do
-		this:JunkLine(i);
+	for i = #self.mainLines, 1, -1 do
+		self:JunkLine(i);
 	end;
-	for i = #this.mainTexts, 1, -1 do
-		this:JunkText(i);
+	for i = #self.mainTexts, 1, -1 do
+		self:JunkText(i);
 	end;
 end;
 
-SetColor = function (this, r, g, b, a)
-	this.brushColor.r = r;
-	this.brushColor.g = g;
-	this.brushColor.b = b;
-	this.brushColor.a = a;
-	this.brushColorSample:SetTexture(r,g,b,a);
+function ArtPad:SetColor(r, g, b, a)
+	self.brushColor.r = r;
+	self.brushColor.g = g;
+	self.brushColor.b = b;
+	self.brushColor.a = a;
+	self.brushColorSample:SetTexture(r,g,b,a);
 end;
 
-SetTexColor = function (this, tex, brush)
+function ArtPad:SetTexColor(tex, brush)
 	tex:SetVertexColor(brush.r,
 		brush.g,
 		brush.b,
@@ -788,7 +788,7 @@ end;
 
 -- [[ Line Handling ]]
 -- Allocator
-CreateLine = function (this, x, y, a, b, brush)
+function ArtPad:CreateLine(x, y, a, b, brush)
 	local ix = math.floor(x);
 	local iy = math.floor(y);
 	local ia = math.floor(a);
@@ -805,18 +805,18 @@ CreateLine = function (this, x, y, a, b, brush)
 	end
 
 	local pix;
-	--if #(this.junkLines) > 0 then
-	--	pix = table.remove(this.junkLines); -- Recycling ftw!
+	--if #(self.junkLines) > 0 then
+	--	pix = table.remove(self.junkLines); -- Recycling ftw!
 	--else
-	pix = this.mainFrame:CreateTexture(nil, "OVERLAY");
+	pix = self.mainFrame:CreateTexture(nil, "OVERLAY");
 	pix:SetTexture("Interface\\AddOns\\ArtPad\\line.tga");
 	--end;
-	this:SetTexColor(pix, brush);
+	self:SetTexColor(pix, brush);
 	pix:ClearAllPoints();
 
-	pix:SetPoint("CENTER", this.mainFrame, "BOTTOMLEFT", cx, cy);
+	pix:SetPoint("CENTER", self.mainFrame, "BOTTOMLEFT", cx, cy);
 	pix:SetWidth(dmax); pix:SetHeight(dmax);
-	pix:SetTexCoord(this.GetCoordsForTransform(
+	pix:SetTexCoord(self.GetCoordsForTransform(
 		cosA, sinA, -(cosA+sinA)/2+0.5,
 		-sinA, cosA, -(-sinA+cosA)/2+0.5));
 	pix:Show();
@@ -825,37 +825,37 @@ CreateLine = function (this, x, y, a, b, brush)
 	pix["lbx"] = ia;
 	pix["lby"] = ib;
 
-	table.insert(this.mainLines, pix);
+	table.insert(self.mainLines, pix);
 
-	return pix, #this.mainLines;
+	return pix, #self.mainLines;
 end;
 
 -- Deallocator
-JunkLine = function (this, id)
-	if this.mainLines[id] then
-		local pix = table.remove(this.mainLines, id);
+function ArtPad:JunkLine(id)
+	if self.mainLines[id] then
+		local pix = table.remove(self.mainLines, id);
 		if pix then
-			table.insert(this.junkLines, pix);
+			table.insert(self.junkLines, pix);
 			pix:Hide();
 		end;
 	end;
 end;
 
 -- [[ Text Handling ]]
-CreateText = function (this, x, y, text)
+function ArtPad:CreateText (x, y, text)
 	local ix = math.floor(x);
 	local iy = math.floor(y);
 
-	if #(this.junkTexts) > 0 then
-		tex = table.remove(this.junkTexts); -- Recycling ftw!
+	if #(self.junkTexts) > 0 then
+		tex = table.remove(self.junkTexts); -- Recycling ftw!
 	else
-		tex = this.mainFrame:CreateFontString(nil, "OVERLAY");
+		tex = self.mainFrame:CreateFontString(nil, "OVERLAY");
 	end;
 	tex:SetFont("Fonts\\FRIZQT__.TTF",12);
 	tex:SetJustifyH("LEFT");
-	tex:SetPoint("BOTTOMLEFT", this.mainFrame, "BOTTOMLEFT", ix, iy);
-	tex:SetTextColor(this.brushColor.r, this.brushColor.g,
-		this.brushColor.b, this.brushColor.a);
+	tex:SetPoint("BOTTOMLEFT", self.mainFrame, "BOTTOMLEFT", ix, iy);
+	tex:SetTextColor(self.brushColor.r, self.brushColor.g,
+		self.brushColor.b, self.brushColor.a);
 
 	tex:SetText(text);
 	tex:Show();
@@ -864,23 +864,23 @@ CreateText = function (this, x, y, text)
 	tex["lbx"] = ix + tex:GetWidth();
 	tex["lby"] = iy + tex:GetHeight();
 
-	table.insert(this.mainTexts, tex);
+	table.insert(self.mainTexts, tex);
 
-	return tex, #this.mainTexts;
+	return tex, #self.mainTexts;
 end;
 
-JunkText = function (this, id)
-	if this.mainTexts[id] then
-		local tex = table.remove(this.mainTexts, id);
+function ArtPad:JunkText(id)
+	if self.mainTexts[id] then
+		local tex = table.remove(self.mainTexts, id);
 		if tex then
-			table.insert(this.junkTexts, tex);
+			table.insert(self.junkTexts, tex);
 			tex:Hide();
 		end;
 	end;
 end;
 
 -- [[ Projection ]]
-GetCoordsForTransform = function(A, B, C, D, E, F)
+function ArtPad.GetCoordsForTransform(A, B, C, D, E, F)
 	-- http://www.wowwiki.com/SetTexCoord_Transformations
 	local det = A*E - B*D;
 	local ULx, ULy, LLx, LLy, URx, URy, LRx, LRy;
@@ -894,7 +894,7 @@ GetCoordsForTransform = function(A, B, C, D, E, F)
 end;
 
     
-}
+
 
 ArtPad:CreateFrames();
 ArtPad:OnLoad();
