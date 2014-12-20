@@ -23,28 +23,52 @@ ArtPad =
 version = GetAddOnMetadata("ArtPad", "Version");
 saveVersion = GetAddOnMetadata("ArtPad", "X-SaveVersion");
 protocolVersion = GetAddOnMetadata("ArtPad", "X-ProtocolVersion");
+eventListener = CreateFrame("FRAME")
 }
 
+-- [[ Event Handlers]]
 function ArtPad:Variables_Loaded()
+	--print("VAR LOADED");
+end
+
+function ArtPad:Player_Login()
+	RegisterAddonMessagePrefix("ArtPad");
+
+	-- [[ Sort settings ]]
 	local ArtPad_Settings_Default = {
 				["SaveVersion"]	= self.saveVersion;
 				["AdminOnly"]	= false; -- Ignore non-raid admins
 				["WarnClear"]	= true; -- Warn before clearing screen
 				["Mode"]		= "GUILD";
 				["Scale"]		= 1;
+				["MinimapIcon"] = {}
 			};
 	if not ArtPad_Settings then
 		ArtPad_Settings = ArtPad_Settings_Default;
 	elseif ArtPad_Settings["SaveVersion"] < self.saveVersion then
 		ArtPad_Settings = ArtPad_Settings_Default;
 	end;
-	self.mainFrame:SetScale(ArtPad_Settings["Scale"])
-end
+	-- [[ Setup Canvas ]]
+	self:SetupMainFrame();
 
-function ArtPad:Player_Login()
-	RegisterAddonMessagePrefix("ArtPad")
-	self.mainFrame:SetHeight(GetScreenHeight()/UIParent:GetEffectiveScale());
-	self.mainFrame:SetWidth(GetScreenWidth()/UIParent:GetEffectiveScale());
+	-- [[ Setup minimap Icon ]]
+	local LDB = LibStub("LibDataBroker-1.1")
+	local LDBIcon = LibStub("LibDBIcon-1.0")
+	if LDB then
+        artpadLauncher = LDB:NewDataObject("ArtPad", {
+            type = "launcher",
+            icon = "Interface\\AddOns\\Artpad\\icon",
+            OnClick = self.MiniMapClick,
+            OnTooltipShow = function(tt)                
+                tt:AddLine("|cffffff00" .. "Left Click|r to toggle the Artpad window")
+                tt:AddLine("|cffffff00" .. "Right Click|r to toggle between raid and guild mode")
+            end,
+        })
+        if LDBIcon then
+            LDBIcon:Register("ArtPad", artpadLauncher, ArtPad_Settings.MinimapIcon)
+            LDBIcon:Show("ArtPad")
+        end
+    end
 end
 
 function ArtPad:Player_Regen_Disabled()
@@ -54,7 +78,7 @@ function ArtPad:Player_Regen_Disabled()
 	end;
 end;
 
-function ArtPad:Chat_Msg_Addon(prefix, message, disType, Sender)
+function ArtPad:Chat_Msg_Addon(prefix, message, disType, sender)
 	if prefix == "ArtPad" and sender ~= UnitName("player") then
 	-- Check security 
 		if (ArtPad_Settings["Mode"] == "GUILD" and disType == "GUILD") or (ArtPad_Settings["Mode"] == "RAID" and disType == "RAID") then
@@ -103,24 +127,31 @@ function ArtPad:Chat_Msg_Addon(prefix, message, disType, Sender)
 		end;
 	end;
 end;
--- [[ Event Handling ]]
+
+
 ArtPad.events = {
 	["VARIABLES_LOADED"] = ArtPad.Variables_Loaded;
 	["PLAYER_LOGIN"] = ArtPad.Player_Login;
 	["PLAYER_REGEN_DISABLED"] = ArtPad.Player_Regen_Disabled;
 	["CHAT_MSG_ADDON"] = ArtPad.Chat_Msg_Addon;
 };
-
 -- [[ Event Management ]]
+
+function ArtPad:SetUpEvents()	
+	self.eventListener.pad = self;
+	self.eventListener:SetScript("OnEvent", self.OnEvent);
+	self:RegisterEvents(self.events);
+end
+
 function ArtPad:RegisterEvents(eventList)
 	for event, handler in pairs(eventList) do
-		self.eventFrame:RegisterEvent(event);
+		self.eventListener:RegisterEvent(event);
 	end
 end;
 
 function ArtPad:UnregisterEvents(eventList)
 	for event, handler in pairs(eventList) do
-		self.eventFrame:UnregisterEvent(event);
+		self.eventListener:UnregisterEvent(event);
 	end
 end;
 
@@ -163,53 +194,6 @@ ArtPad.shortcuts = {
 };
 
 
--- [[ Load Event Handling ]]
-function ArtPad:OnLoad()
-	--Slash command
-	SlashCmdList["ARTPAD"] = self.OnSlashCommand;
-	SLASH_ARTPAD1 = "/artpad";
-	SLASH_ARTPAD2 = "/ap";
-
-	self.mainFrame:SetScript("OnEnter", self.OnEnter);
-	self.mainFrame:SetScript("OnLeave", self.OnLeave);
-
-	--self.mainFrame:EnableKeyboard(true);
-	--self.mainFrame:SetScript("OnKeyDown", self.OnKeyDown);
-	--self.mainFrame:SetScript("OnKeyUp", self.OnKeyUp);
-
-	self.mainFrame:EnableMouse(true);
-	self.mainFrame:SetScript("OnMouseDown", self.OnMouseDown);
-	self.mainFrame:SetScript("OnMouseUp", self.OnMouseUp);
-
-	self.mainFrame:SetScript("OnShow", self.OnShow);
-	self.mainFrame:SetScript("OnHide", self.OnHide);
-
-	self.textInput:SetScript("OnEnterPressed", self.OnTextEnter);
-	self.textInput:SetScript("OnEscapePressed", self.OnTextEscape);
-
-	self.eventFrame:SetScript("OnEvent", self.OnEvent);
-	self:RegisterEvents(self.events);
-	local LDB = LibStub("LibDataBroker-1.1")
-	local LDBIcon = LibStub("LibDBIcon-1.0")
-	if LDB then
-        artpadLauncher = LDB:NewDataObject("ArtPad", {
-            type = "launcher",
-            icon = "Interface\\AddOns\\Artpad\\icon",
-            OnClick = self.MiniMapClick,
-            OnTooltipShow = function(tt)                
-                tt:AddLine("|cffffff00" .. "Left Click|r to toggle the Artpad window")
-                tt:AddLine("|cffffff00" .. "Right Click|r to toggle between raid and guild mode")
-            end,
-        })
-        if LDBIcon then
-            LDBIcon:Register("ArtPad", artpadLauncher, {})
-            LDBIcon:Show("ArtPad")
-        end
-    end
-	-- NOT REENTRANT!
-	self.OnLoad = nil;
-end;
-
 -- [[ Minimap Event]]
 function ArtPad.MiniMapClick(clickedframe, button)
 	if not InCombatLockdown() then
@@ -233,7 +217,6 @@ end;
 -- [[ Frame Event Handling ]]
 function ArtPad.OnEvent(frame, event, ...)
 	local self = frame.pad; -- Static Method
-
 	if self.events[event] then
 		self.events[event](self, ...);
 	else
@@ -463,30 +446,21 @@ end;
 
 -- [[ Frame Setup and handling ]]
 
-ArtPad.mainFrameWidth = (floor(GetScreenHeight()*100+.5)/100)/UIParent:GetEffectiveScale();--3840;
-ArtPad.mainFrameHeight = (floor(GetScreenWidth()*100+.5)/100)/UIParent:GetEffectiveScale();--;2160;
-
-
 ArtPad.mainFrame = nil;	-- For input/output
-ArtPad.eventFrame = nil;	-- For event processing
-
 ArtPad.textInput = nil;
 
 ArtPad.brushColorSample = nil;
 
-function ArtPad:CreateFrames()
+function ArtPad:SetupMainFrame()
 	local frameM = CreateFrame("Frame", nil, UIParent);
-	local frameE = CreateFrame("Frame", nil, UIParent);
 
 	self.mainFrame = frameM;
 	self.mainFrame.pad = self;
-	self.eventFrame = frameE;
-	self.eventFrame.pad = self;
 
 	frameM:SetFrameStrata("BACKGROUND");
-	frameM:SetWidth(self.mainFrameWidth);
-	frameM:SetHeight(self.mainFrameHeight);
-	frameM:SetScale(1);
+	frameM:SetWidth((floor(GetScreenWidth()*100+.5)/100));
+	frameM:SetHeight((floor(GetScreenHeight()*100+.5)/100));
+	frameM:SetScale(ArtPad_Settings["Scale"]);
 	frameM:SetPoint("CENTER", 0, 0);
 	frameM:SetMovable(true);
 	frameM:SetClampedToScreen(true);
@@ -599,7 +573,19 @@ function ArtPad:CreateFrames()
 	escape_button:SetScript("OnClick", self.buttons["Close"]);
 	escape_button.pad = self;
 	
-	self.CreateFrames = nil;
+	self.mainFrame:SetScript("OnEnter", self.OnEnter);
+	self.mainFrame:SetScript("OnLeave", self.OnLeave);
+
+	self.mainFrame:EnableMouse(true);
+	self.mainFrame:SetScript("OnMouseDown", self.OnMouseDown);
+	self.mainFrame:SetScript("OnMouseUp", self.OnMouseUp);
+
+	self.mainFrame:SetScript("OnShow", self.OnShow);
+	self.mainFrame:SetScript("OnHide", self.OnHide);
+
+	self.textInput:SetScript("OnEnterPressed", self.OnTextEnter);
+	self.textInput:SetScript("OnEscapePressed", self.OnTextEscape);
+
 end;
 
 function ArtPad.FrameMouseDown(frame)
@@ -891,10 +877,11 @@ function ArtPad.GetCoordsForTransform(A, B, C, D, E, F)
 end;
 
     
+--[[ Slash Commands ]]
+SlashCmdList["ARTPAD"] = ArtPad.OnSlashCommand;
+SLASH_ARTPAD1 = "/artpad";
+SLASH_ARTPAD2 = "/ap";
 
-
-ArtPad:CreateFrames();
-ArtPad:OnLoad();
 
 -- [[ Binding Constants ]]
 
@@ -902,3 +889,9 @@ BINDING_HEADER_ARTPAD = "ArtPad";
 BINDING_NAME_ARTPAD_SHOW = "Show Art Window";
 BINDING_NAME_ARTPAD_HIDE = "Hide Art Window";
 BINDING_NAME_ARTPAD_TOGGLE = "Toggle Art Window";
+
+-- [[ Listen for events ]]
+
+ArtPad:SetUpEvents();
+
+print("POOTING")
