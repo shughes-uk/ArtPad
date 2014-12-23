@@ -23,7 +23,8 @@ ArtPad =
 version = GetAddOnMetadata("ArtPad", "Version");
 saveVersion = GetAddOnMetadata("ArtPad", "X-SaveVersion");
 protocolVersion = GetAddOnMetadata("ArtPad", "X-ProtocolVersion");
-eventListener = CreateFrame("FRAME")
+eventListener = CreateFrame("FRAME");
+canvasSize = {["X"] = 3840 ; ["Y"] = 2160 };
 }
 
 -- [[ Event Handlers]]
@@ -41,7 +42,8 @@ function ArtPad:Player_Login()
 				["WarnClear"]	= true; -- Warn before clearing screen
 				["Mode"]		= "GUILD";
 				["Scale"]		= 1;
-				["MinimapIcon"] = {}
+				["MinimapIcon"] = {};
+				["OneTimeMessage"] = false;
 			};
 	if not ArtPad_Settings then
 		ArtPad_Settings = ArtPad_Settings_Default;
@@ -273,19 +275,21 @@ function ArtPad.OnMouseWheel(frame, delta)
 	local self = frame.pad; -- Static Method
 	local frameScale = self.mainFrame:GetScale();
 	local newScale = frameScale + (frameScale*0.10*delta) ;
-	if 100 > newScale and newScale > 0.01 then
+	if 100 > newScale and newScale > 0.05 then
 		local curmx, curmy = GetCursorPosition();
 		--mouse coords are subject to scaling because reasons
 		curmx = curmx/UIParent:GetScale();
 		curmy = curmy/UIParent:GetScale();	
 		if delta == 1 then			
-			self.CalcNewZoomOffset(curmx,curmy);
+			self.CalcNewZoomOffset(curmx,curmy);			
+			newx = self.Actual_X_Ofs - (self.Actual_X_Ofs - self.Desired_X_Ofs)*0.10
+			newy = self.Actual_Y_Ofs - (self.Actual_Y_Ofs - self.Desired_Y_Ofs)*0.10
 		else 
 			self.Desired_X_Ofs = 0;
-			self.Desired_Y_Ofs = 0;
+			self.Desired_Y_Ofs = 0;			
+			newx = self.Actual_X_Ofs - (self.Actual_X_Ofs - self.Desired_X_Ofs)*0.40
+			newy = self.Actual_Y_Ofs - (self.Actual_Y_Ofs - self.Desired_Y_Ofs)*0.40
 		end
-		newx = self.Actual_X_Ofs - (self.Actual_X_Ofs - self.Desired_X_Ofs)*0.40
-		newy = self.Actual_Y_Ofs - (self.Actual_Y_Ofs - self.Desired_Y_Ofs)*0.40
 		self.mainFrame:SetPoint("CENTER", newx/newScale, newy/newScale);
 		self.Actual_Y_Ofs = newy;
 		self.Actual_X_Ofs = newx;
@@ -306,7 +310,12 @@ end
 -- [[ Override Handling ]]
 function ArtPad.OnShow(frame)
 	if  not InCombatLockdown() then
+		
 		local self = frame.pad; -- Static Method
+		if not ArtPad_Settings["OneTimeMessage"] then
+			self:Message("New in ArtPad 8.6 : Try using the mousewheel!")
+			ArtPad_Settings["OneTimeMessage"] = true;
+		end
 		-- Set Override
 		for b, k in pairs(self.shortcuts) do
 			SetOverrideBindingClick(self.mainFrame, true, k, "ArtPad_MainFrame_"..b);
@@ -510,10 +519,8 @@ function ArtPad:SetupMainFrame()
 	self.mainFrame.pad = self;
 
 	frameM:SetFrameStrata("BACKGROUND");
-	--frameM:SetWidth((floor(GetScreenWidth()*100+.5)/100));
-	--frameM:SetHeight((floor(GetScreenHeight()*100+.5)/100));
-	frameM:SetWidth(15360);
-	frameM:SetHeight(8640);
+	frameM:SetWidth(self.canvasSize.X);
+	frameM:SetHeight(self.canvasSize.Y);
 	frameM:SetScale(ArtPad_Settings["Scale"]);
 	frameM:SetPoint("CENTER");
 	frameM:SetMovable(true);
