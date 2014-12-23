@@ -17,4 +17,3 @@ Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
 
 
 ArtPad.lua
-ArtPad_Config.lua
