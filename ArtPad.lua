@@ -14,7 +14,7 @@
 -- d(<x>,<y>,<a>,<b>)	-- Draw a line from (x,y) to (a,b)
 -- c(<x>,<y>)		-- Clear a point at (x,y)
 -- c(<x>,<y>,<a>,<b>)	-- Clear a line from (x,y) to (a,b)
--- c()			-- Clear Canavas
+-- c()			-- Clear Canvas
 -- f(<r>,<g>,<b>,<a>)	-- Change to given color
 -- t(<x>,<y>,"<t>")	-- Draw text t with bottom left corner at (x,y)
 ArtPad =
@@ -122,7 +122,7 @@ function ArtPad:Chat_Msg_Addon(prefix, message, disType, sender)
 		--wipe the canvas
 			local a, b = string.find(message, "c%(%)");
 			if a then
-				self:ClearCanavas();
+				self:ClearCanvas();
 				self:Message(sender .. " just cleared the canvas")
 				return;
 			end;
@@ -167,7 +167,7 @@ ArtPad.buttons = {
 	["Clear"] =
 		function (frame, button, down)
 			local self = frame.pad; -- Static Method
-			self:ClearCanavas();
+			self:ClearCanvas();
 			self:SendClear();
 		end;
 	["Text"] =
@@ -458,7 +458,7 @@ ArtPad.slashCommands = {
 		end;
 	["clear"] =
 		function (self)
-			self:ClearCanavas();
+			self:ClearCanvas();
 		end;
 	["adminonly"] =
 		function (self, state)
@@ -821,7 +821,7 @@ function ArtPad:LineLineIntersect(ax0, ay0, ax1, ay1, bx0, by0, bx1, by1)
 end;
 
 -- A square brush
-function ArtPad:ClearCanavas()
+function ArtPad:ClearCanvas()
 	if ArtPad_Settings["WarnClear"] then
 		-- TODO: Ask for permission to clear
 	end;
