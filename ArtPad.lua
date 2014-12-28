@@ -189,6 +189,18 @@ ArtPad.buttons = {
 			ColorPickerFrame:Hide(); -- Need to run the OnShow handler.
 			ColorPickerFrame:Show();
 		end;
+	["ArtMode"] =
+		function (frame, button, down)
+			local self = frame.pad;
+			if self.mainFrame:GetFrameStrata() == "BACKGROUND" then
+				self.mainFrame:SetFrameStrata("FULLSCREEN");
+				self.canvasBackground:SetTexture(0,0,0,0.8);
+			else
+				self.mainFrame:SetFrameStrata("BACKGROUND");
+				self.canvasBackground:SetTexture(0,0,0,0.5);
+			end
+		end;
+
 };
 
 ArtPad.shortcuts = {
@@ -328,6 +340,7 @@ function ArtPad.OnShow(frame)
 		self.clear_button:Show()
 		self.secretFrame:Show()
 		self.versionText:Show()
+		self.artmode_button:Show()
 	end
 end;
 
@@ -341,6 +354,7 @@ function ArtPad.OnHide(frame)
 	self.clear_button:Hide()
 	self.secretFrame:Hide()
 	self.versionText:Hide()
+	self.artmode_button:Hide()
 end;
 
 -- [[ Tracking Functions ]]
@@ -534,11 +548,12 @@ function ArtPad:SetupMainFrame()
 	frameT:SetPoint("BOTTOMLEFT", frameM, "TOP", -110, -100);
 	frameT:SetPoint("TOPRIGHT", frameM, "TOP", 110, -80);
 	frameT:SetFont("Fonts\\FRIZQT__.TTF",18);
+	frameT:SetFrameStrata("TOOLTIP");
 	frameT:Hide();
 
-	local t = frameM:CreateTexture(nil, "BACKGROUND");
-	t:SetTexture(0,0,0,0.5);
-	t:SetAllPoints(frameM);
+	self.canvasBackground = frameM:CreateTexture(nil, "BACKGROUND");
+	self.canvasBackground:SetTexture(0,0,0,0.5);
+	self.canvasBackground:SetAllPoints(frameM);
 
 	
 
@@ -561,6 +576,7 @@ function ArtPad:SetupMainFrame()
 	self.cpicker_button:SetScript("OnClick", self.buttons["ColorPicker"]);
 	self.cpicker_button.pad = self;
 	self.cpicker_button:SetNormalFontObject("GameFontNormalLarge");
+	self.cpicker_button:SetFrameStrata("FULLSCREEN")
 	self.cpicker_button:Hide()
 	--texture
 	local cpicker_button_tex = cpicker_button:CreateTexture(nil, "ARTWORK");
@@ -573,13 +589,14 @@ function ArtPad:SetupMainFrame()
 	--text_button
 	--buttonframe
 	self.text_button = CreateFrame("Button", "text_button", UIParent)
-	self.text_button:SetPoint("TOP", UIParent, "TOP", -110, -40)
+	self.text_button:SetPoint("TOP", UIParent, "TOP", -100, -40)
 	self.text_button:SetWidth(100)
 	self.text_button:SetHeight(40)
 	self.text_button:SetScript("OnClick", self.buttons["Text"]);
 	self.text_button.pad = self;
 	self.text_button:SetText("Text")
 	self.text_button:SetNormalFontObject("GameFontNormalLarge")
+	self.text_button:SetFrameStrata("FULLSCREEN")
 	self.text_button:Hide()
 
 	--textures
@@ -604,13 +621,14 @@ function ArtPad:SetupMainFrame()
 	--clear_button
 	--buttonframe
 	self.clear_button = CreateFrame("Button", "clear_button", UIParent)
-	self.clear_button:SetPoint("TOP", UIParent, "TOP", 130, -40)
+	self.clear_button:SetPoint("TOP", UIParent, "TOP", 120, -40)
 	self.clear_button:SetWidth(110)
 	self.clear_button:SetHeight(40)	
 	self.clear_button:SetText("Clear Canvas")
 	self.clear_button:SetNormalFontObject("GameFontNormalLarge")
 	self.clear_button:SetScript("OnClick", self.buttons["Clear"]);
 	self.clear_button.pad = self;
+	self.clear_button:SetFrameStrata("FULLSCREEN")
 	self.clear_button:Hide()
 	
 	--textures
@@ -632,6 +650,39 @@ function ArtPad:SetupMainFrame()
 	c_ptex:SetTexCoord(0, 0.625, 0, 0.6875)
 	c_ptex:SetAllPoints()
 	self.clear_button:SetPushedTexture(c_ptex)
+
+	--artmode_button
+	--buttonframe
+	self.artmode_button = CreateFrame("Button", "artmode_button", UIParent)
+	self.artmode_button:SetPoint("TOP", UIParent, "TOP", 240, -40)
+	self.artmode_button:SetWidth(120)
+	self.artmode_button:SetHeight(40)	
+	self.artmode_button:SetText("Toggle ArtMode")
+	self.artmode_button:SetNormalFontObject("GameFontNormalLarge")
+	self.artmode_button:SetScript("OnClick", self.buttons["ArtMode"]);
+	self.artmode_button.pad = self;
+	self.artmode_button:SetFrameStrata("FULLSCREEN")
+	self.artmode_button:Hide()
+	
+	--textures
+	local am_ntex = self.artmode_button:CreateTexture()
+	am_ntex:SetTexture("Interface/Buttons/UI-Panel-Button-Up")
+	am_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
+	am_ntex:SetAllPoints()	
+	self.artmode_button:SetNormalTexture(am_ntex)
+
+	
+	local am_htex = self.artmode_button:CreateTexture()
+	am_htex:SetTexture("Interface/Buttons/UI-Panel-Button-Highlight")
+	am_htex:SetTexCoord(0, 0.625, 0, 0.6875)
+	am_htex:SetAllPoints()
+	self.artmode_button:SetHighlightTexture(am_htex)
+	
+	local am_ptex = self.artmode_button:CreateTexture()
+	am_ptex:SetTexture("Interface/Buttons/UI-Panel-Button-Down")
+	am_ptex:SetTexCoord(0, 0.625, 0, 0.6875)
+	am_ptex:SetAllPoints()
+	self.artmode_button:SetPushedTexture(am_ptex)
 
 	--escape_button_thing
 	self.escape_button = CreateFrame("Button", "ArtPad_MainFrame_Close", UIParent);
