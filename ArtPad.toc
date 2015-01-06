@@ -1,8 +1,8 @@
 ## Interface: 60000
 ## Title: ArtPad
-## Version: 8.7
+## Version: 8.8
 ## X-SaveVersion: 3
-## X-ProtocolVersion: 1
+## X-ProtocolVersion: 2
 ## Author: Dust, Turalyon-EU & Snaxxramas, Defias Brotherhood-EU
 ## Notes: Shared Canvas
 ## SavedVariables: ArtPad_Settings
