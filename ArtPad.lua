@@ -96,7 +96,7 @@ end;
 function ArtPad.PersistTimer_Expired()
 	if not ArtPad.receivingCanvas or not ArtPad.persistedCanvas then
 		print("Not receiving a canvas after 30 seconds, assuming nobody is around :(")
-		ArtPad.persistedCanvas = true;
+		ArtPad.canvasPersisted = true;
 	end
 end
 function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
@@ -112,7 +112,7 @@ function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
 			end;
 		--request for canvas providers
 			local request_providers = string.match(message, "r%(%)");
-			if request_providers and not self.sendingCanvas then
+			if request_providers and not self.sendingCanvas and self.canvasPersisted then
 				print(sender.." requested the canvas and we are available")
 				self:SendCommMessage(self.prefix,self.EncodeData({available=true}),"WHISPER",sender,"ALERT");
 			end
@@ -159,8 +159,8 @@ function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
 			--whispers are sent compressed/encoded unlike broadcasts as they can be an entire canvas
 			data = self.DecodeData(message)
 			--message from someone available to send the canvas
-			if data.available and not self.receivingCanvas and not self.persistedCanvas then
-				print("Sending canvas to "..sender)
+			if data.available and not self.receivingCanvas and not self.canvasPersisted then
+				print("Requesting canvas from "..sender)
 				self:SendCommMessage(self.prefix,self.EncodeData({request=true}),"WHISPER",sender,"ALERT");
 			elseif data.sending then
 			--sender has begun to send the canvas to us
@@ -171,14 +171,14 @@ function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
 				--prepare canvas data for sending
 				local lines = {}
 				for i = #self.mainLines, 1, -1 do
-					lines[i] = "d("..self.mainLines["lax"]..","..self.mainLines["lay"]..","..self.mainLines["lbx"]..","..self.mainLines["lby"]..","..self.mainLines["r"]..","..self.mainLines["g"]..","..self.mainLines["b"]..","..self.mainLines["a"]..")"
+					lines[i] = "d("..self.mainLines[i]["lax"]..","..self.mainLines[i]["lay"]..","..self.mainLines[i]["lbx"]..","..self.mainLines[i]["lby"]..","..self.mainLines[i]["r"]..","..self.mainLines[i]["g"]..","..self.mainLines[i]["b"]..","..self.mainLines[i]["a"]..")"
 				end
 				--compress it up
 				local to_send = self.EncodeData({canvas=lines})
 				--whisper it back, can take a long time.. is async though
 				print("Sending "..sender.." the canvas")
 				self:SendCommMessage(self.prefix,self.EncodeData({sending=true}),"WHISPER",sender,"ALERT")
-				self:SendCommMessage(self.prefix,to_send,"WHISPER",sender,"BULK")
+				self:SendCommMessage(self.prefix,to_send,"WHISPER",sender,"BULK",self.SendMsg_Callback,"canvas_send")
 				self.sendingCanvas = true;
 
 			--they gave us the entire canvas, draw it
@@ -193,11 +193,18 @@ function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
 					end;
 				end;
 				print("We got the canvas from "..sender)
-				self.persistedCanvas = true;
+				self.canvasPersisted = true;
+				self.receivingCanvas = false;
 			end;
 		end;
 	end;
 end;
+function ArtPad.SendMsg_Callback(arg,sent,total)
+	if arg == "canvas_send" and sent == total then
+		print("Finished sending the canvas, becoming available again")
+		ArtPad.sendingCanvas = false;
+	end
+end
 
 function ArtPad.DecodeData(data)
 	local self = ArtPad
@@ -537,6 +544,12 @@ function ArtPad:ValidateSender(sender)
 end;
 
 ArtPad.slashCommands = {
+	["dumpvar"] = 
+		function(self)
+			print("Receiving canvas : " ..tostring(self.receivingCanvas))
+			print("Persisted : "..tostring(self.canvasPersisted))
+			print("Sending : "..tostring(self.sendingCanvas))
+		end;
 	["guild"] = 
 		function (self)
 			ArtPad_Settings["Mode"] = "GUILD";
