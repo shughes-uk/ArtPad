@@ -92,11 +92,13 @@ function ArtPad:Player_Regen_Disabled()
 		self.mainFrame:Hide();
 	end;
 end;
+
 ArtPad.persist_Retrys = 0;
+
 function ArtPad.PersistTimer_Expired()
 	if ArtPad.persist_Retrys == 12 then
 		C_Timer.After(10, ArtPad.PersistTimer_Expired)
-    	self:SendCommMessage(ArtPad.prefix,"r()",ArtPad_Settings["Mode"]);
+    	ArtPad:SendCommMessage(ArtPad.prefix,"r()",ArtPad_Settings["Mode"]);
     	ArtPad.persist_Retrys = ArtPad.persist_Retrys + 1;
 	elseif not ArtPad.receivingCanvas and not ArtPad.canvasPersisted then
 		print("Not receiving a canvas after 120 seconds, assuming nobody is around")
@@ -165,11 +167,11 @@ function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
 			--message from someone available to send the canvas
 			if data.available and not self.receivingCanvas and not self.canvasPersisted then
 				print("Requesting canvas from "..sender)
+				self.receivingCanvas = true;
 				self:SendCommMessage(self.prefix,self.EncodeData({request=true}),"WHISPER",sender,"ALERT");
 			elseif data.sending then
 			--sender has begun to send the canvas to us
 				print(sender.." has begun sending us the canvas")
-				self.receivingCanvas = true;
 			--request for canvas			
 			elseif data.request then
 				--prepare canvas data for sending
@@ -203,6 +205,7 @@ function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
 		end;
 	end;
 end;
+
 function ArtPad.SendMsg_Callback(arg,sent,total)
 	if arg == "canvas_send" and sent == total then
 		print("Finished sending the canvas, becoming available again")
@@ -216,13 +219,13 @@ function ArtPad.DecodeData(data)
 	--Decompress the decoded data
 	local decompressed, message = self.LibCompress:Decompress(decoded)
 	if(not decompressed) then
-		print("ArtPad: error decompressing: " .. message)
+		--print("ArtPad: error decompressing: " .. message)
 		return nil
 	end		
 	-- Deserialize the decompressed data
 	local success, final = self:Deserialize(decompressed)
 	if (not success) then
-		print("ArtPad: error deserializing " .. final)
+		--print("ArtPad: error deserializing " .. final)
 		return nil
 	end
 	return final
