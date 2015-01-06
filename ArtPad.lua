@@ -94,7 +94,7 @@ function ArtPad:Player_Regen_Disabled()
 end;
 
 function ArtPad.PersistTimer_Expired()
-	if not ArtPad.receivingCanvas or not ArtPad.persistedCanvas then
+	if not ArtPad.receivingCanvas and not ArtPad.persistedCanvas then
 		print("Not receiving a canvas after 30 seconds, assuming nobody is around :(")
 		ArtPad.canvasPersisted = true;
 	end
