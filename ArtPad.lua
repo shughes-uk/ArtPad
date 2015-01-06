@@ -82,7 +82,7 @@ function ArtPad:Player_Login()
     end
     -- [[ Start watching addon comms ]]
     self:RegisterComm("ArtPad"..ArtPad.protocolVersion, ArtPad.Chat_Msg_Addon)
-    C_Timer.After(30, ArtPad.PersistTimer_Expired)
+    C_Timer.After(10, ArtPad.PersistTimer_Expired)
     self:SendCommMessage(ArtPad.prefix,"r()",ArtPad_Settings["Mode"]);
 end
 
@@ -92,10 +92,14 @@ function ArtPad:Player_Regen_Disabled()
 		self.mainFrame:Hide();
 	end;
 end;
-
+ArtPad.persist_Retrys = 0;
 function ArtPad.PersistTimer_Expired()
-	if not ArtPad.receivingCanvas and not ArtPad.canvasPersisted then
-		print("Not receiving a canvas after 30 seconds, assuming nobody is around :(")
+	if ArtPad.persist_Retrys == 12 then
+		C_Timer.After(10, ArtPad.PersistTimer_Expired)
+    	self:SendCommMessage(ArtPad.prefix,"r()",ArtPad_Settings["Mode"]);
+    	ArtPad.persist_Retrys = ArtPad.persist_Retrys + 1;
+	elseif not ArtPad.receivingCanvas and not ArtPad.canvasPersisted then
+		print("Not receiving a canvas after 120 seconds, assuming nobody is around")
 		ArtPad.canvasPersisted = true;
 	end
 end
