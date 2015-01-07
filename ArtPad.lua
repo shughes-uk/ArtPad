@@ -38,7 +38,6 @@ function ArtPad:Variables_Loaded()
 end
 
 function ArtPad:Player_Login()
-	RegisterAddonMessagePrefix("ArtPad");
 	-- [[ Get Libs ]]
 	ArtPad.LibSerialize = LibStub:GetLibrary("AceSerializer-3.0")
 	ArtPad.LibCompress = LibStub:GetLibrary("LibCompress")
@@ -81,7 +80,7 @@ function ArtPad:Player_Login()
         end
     end
     -- [[ Start watching addon comms ]]
-    self:RegisterComm("ArtPad"..ArtPad.protocolVersion, ArtPad.Chat_Msg_Addon)
+    self:RegisterComm(ArtPad.prefix, ArtPad.Chat_Msg_Addon)
     C_Timer.After(10, ArtPad.PersistTimer_Expired)
     self:SendCommMessage(ArtPad.prefix,"r()",ArtPad_Settings["Mode"]);
 end
@@ -96,7 +95,7 @@ end;
 ArtPad.persist_Retrys = 0;
 
 function ArtPad.PersistTimer_Expired()
-	if ArtPad.persist_Retrys == 12 then
+	if ArtPad.persist_Retrys ~= 12 and not ArtPad.receivingCanvas then
 		C_Timer.After(10, ArtPad.PersistTimer_Expired)
     	ArtPad:SendCommMessage(ArtPad.prefix,"r()",ArtPad_Settings["Mode"]);
     	ArtPad.persist_Retrys = ArtPad.persist_Retrys + 1;
@@ -105,6 +104,7 @@ function ArtPad.PersistTimer_Expired()
 		ArtPad.canvasPersisted = true;
 	end
 end
+
 function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
 	local self = ArtPad;
 	if prefix == self.prefix and sender ~= UnitName("player") then
@@ -164,43 +164,45 @@ function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
 		elseif disType == "WHISPER" then
 			--whispers are sent compressed/encoded unlike broadcasts as they can be an entire canvas
 			data = self.DecodeData(message)
-			--message from someone available to send the canvas
-			if data.available and not self.receivingCanvas and not self.canvasPersisted then
-				print("Requesting canvas from "..sender)
-				self.receivingCanvas = true;
-				self:SendCommMessage(self.prefix,self.EncodeData({request=true}),"WHISPER",sender,"ALERT");
-			elseif data.sending then
-			--sender has begun to send the canvas to us
-				print(sender.." has begun sending us the canvas")
-			--request for canvas			
-			elseif data.request then
-				--prepare canvas data for sending
-				local lines = {}
-				for i = #self.mainLines, 1, -1 do
-					lines[i] = "d("..self.mainLines[i]["lax"]..","..self.mainLines[i]["lay"]..","..self.mainLines[i]["lbx"]..","..self.mainLines[i]["lby"]..","..self.mainLines[i]["r"]..","..self.mainLines[i]["g"]..","..self.mainLines[i]["b"]..","..self.mainLines[i]["a"]..")"
-				end
-				--compress it up
-				local to_send = self.EncodeData({canvas=lines})
-				--whisper it back, can take a long time.. is async though
-				print("Sending "..sender.." the canvas")
-				self:SendCommMessage(self.prefix,self.EncodeData({sending=true}),"WHISPER",sender,"ALERT")
-				self:SendCommMessage(self.prefix,to_send,"WHISPER",sender,"BULK",self.SendMsg_Callback,"canvas_send")
-				self.sendingCanvas = true;
+			if data then
+				--message from someone available to send the canvas
+				if data.available and not self.receivingCanvas and not self.canvasPersisted then
+					print("Requesting canvas from "..sender)
+					self.receivingCanvas = true;
+					self:SendCommMessage(self.prefix,self.EncodeData({request=true}),"WHISPER",sender,"ALERT");
+				elseif data.sending then
+				--sender has begun to send the canvas to us
+					print(sender.." has begun sending us the canvas")
+				--request for canvas			
+				elseif data.request then
+					--prepare canvas data for sending
+					local lines = {}
+					for i = #self.mainLines, 1, -1 do
+						lines[i] = "d("..self.mainLines[i]["lax"]..","..self.mainLines[i]["lay"]..","..self.mainLines[i]["lbx"]..","..self.mainLines[i]["lby"]..","..self.mainLines[i]["r"]..","..self.mainLines[i]["g"]..","..self.mainLines[i]["b"]..","..self.mainLines[i]["a"]..")"
+					end
+					--compress it up
+					local to_send = self.EncodeData({canvas=lines})
+					--whisper it back, can take a long time.. is async though
+					print("Sending "..sender.." the canvas")
+					self:SendCommMessage(self.prefix,self.EncodeData({sending=true}),"WHISPER",sender,"ALERT")
+					self:SendCommMessage(self.prefix,to_send,"WHISPER",sender,"BULK",self.SendMsg_Callback,"canvas_send")
+					self.sendingCanvas = true;
 
-			--they gave us the entire canvas, draw it
-			elseif data.canvas then
-				for i = #data.canvas, 1, -1 do
-					local x,y,a,b,brushR,brushG,brushB,brushA = string.match(data.canvas[i], "d%((%d+),(%d+),(%d+),(%d+),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*)%)");
-					if x then
-						if not self.mainFrame:IsShown() and artpadLauncher then
-							artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
-						end					
-						self:DrawLine(x,y,a,b,{r=brushR,g=brushG,b=brushB,a=brushA});
+				--they gave us the entire canvas, draw it
+				elseif data.canvas then
+					for i = #data.canvas, 1, -1 do
+						local x,y,a,b,brushR,brushG,brushB,brushA = string.match(data.canvas[i], "d%((%d+),(%d+),(%d+),(%d+),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*)%)");
+						if x then
+							if not self.mainFrame:IsShown() and artpadLauncher then
+								artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
+							end					
+							self:DrawLine(x,y,a,b,{r=brushR,g=brushG,b=brushB,a=brushA});
+						end;
 					end;
+					print("We got the canvas from "..sender)
+					self.canvasPersisted = true;
+					self.receivingCanvas = false;
 				end;
-				print("We got the canvas from "..sender)
-				self.canvasPersisted = true;
-				self.receivingCanvas = false;
 			end;
 		end;
 	end;
@@ -225,7 +227,7 @@ function ArtPad.DecodeData(data)
 	-- Deserialize the decompressed data
 	local success, final = self:Deserialize(decompressed)
 	if (not success) then
-		--print("ArtPad: error deserializing " .. final)
+		print("ArtPad: error deserializing " .. final)
 		return nil
 	end
 	return final
@@ -896,27 +898,32 @@ ArtPad.mainTexts = {};
 ArtPad.junkTexts = {};
 
 function ArtPad:SendLine(x, y, oldX, oldY, brush)
-	if oldY and oldY then		
-		SendAddonMessage("ArtPad", "d("..x..","..y..","..oldX..","..oldY..","..brush.r..","..brush.g..","..brush.b..","..brush.a..")", ArtPad_Settings["Mode"]);
+	if oldY and oldY then
+		local msg = "d("..x..","..y..","..oldX..","..oldY..","..brush.r..","..brush.g..","..brush.b..","..brush.a..")"
+		ArtPad:SendCommMessage(ArtPad.prefix, msg, ArtPad_Settings["Mode"], nil, "BULK")			
 	end;
 end;
 
 function ArtPad:SendClear(x, y, oldX, oldY)
+	local msg;
 	if oldY and oldY then
-		SendAddonMessage("ArtPad", "c("..x..","..y..","..oldX..","..oldY..")", ArtPad_Settings["Mode"]);
+		msg = "c("..x..","..y..","..oldX..","..oldY..")";
 	elseif x and y then
-		SendAddonMessage("ArtPad", "c("..x..","..y..")", ArtPad_Settings["Mode"]);
+		msg= "c("..x..","..y..")";
 	else
-		SendAddonMessage("ArtPad", "c()", ArtPad_Settings["Mode"]);
+		msg = "c()";
 	end;
+	ArtPad:SendCommMessage(ArtPad.prefix, msg, ArtPad_Settings["Mode"], nil, "BULK")	
 end;
 
 function ArtPad:SendColor(r, g, b, a)
-	SendAddonMessage("ArtPad", "f("..r..","..g..","..b..","..a..")", ArtPad_Settings["Mode"]);
+	local msg = "f("..r..","..g..","..b..","..a..")";
+	ArtPad:SendCommMessage(ArtPad.prefix, msg, ArtPad_Settings["Mode"], nil, "BULK")
 end;
 
 function ArtPad:SendText(x, y, text)
-	SendAddonMessage("ArtPad", "t("..x..","..y..",\""..text.."\")", ArtPad_Settings["Mode"]);
+	local msg = "t("..x..","..y..",\""..text.."\")"
+	ArtPad:SendCommMessage(ArtPad.prefix, msg, ArtPad_Settings["Mode"], nil, "BULK")
 end;
 
 function ArtPad:DrawLine(x, y, oldX, oldY, brush)
