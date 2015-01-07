@@ -106,7 +106,8 @@ function ArtPad.PersistTimer_Expired()
 end
 
 function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
-	local self = ArtPad;
+	local self = ArtPad;	
+	--print('prefix '..prefix,'msglen '..#message,'distype '..disType,'sender '..sender)
 	if prefix == self.prefix and sender ~= UnitName("player") then
 		--guild/raid is a broadcast and is single lines/text/clears
 		if (ArtPad_Settings["Mode"] == "GUILD" and disType == "GUILD") or (ArtPad_Settings["Mode"] == "RAID" and disType == "RAID") then
@@ -219,7 +220,7 @@ function ArtPad.DecodeData(data)
 	local self = ArtPad
 	local decoded = self.LibCompressEncode:Decode(data)		
 	--Decompress the decoded data
-	local decompressed, message = self.LibCompress:Decompress(decoded)
+	local decompressed, message = self.LibCompress:DecompressHuffman(decoded)
 	if(not decompressed) then
 		--print("ArtPad: error decompressing: " .. message)
 		return nil
@@ -228,6 +229,7 @@ function ArtPad.DecodeData(data)
 	local success, final = self:Deserialize(decompressed)
 	if (not success) then
 		print("ArtPad: error deserializing " .. final)
+		ArtPad._debug_decompressed = decompressed
 		return nil
 	end
 	return final
@@ -236,7 +238,7 @@ end
 function ArtPad.EncodeData(data)
 	local self = ArtPad
 	local serialized = self:Serialize(data)
-	local compressed = self.LibCompress:Compress(serialized)
+	local compressed = self.LibCompress:CompressHuffman(serialized)
 	local encoded = ArtPad.LibCompressEncode:Encode(compressed)
 	return encoded
 end
@@ -553,6 +555,16 @@ function ArtPad:ValidateSender(sender)
 end;
 
 ArtPad.slashCommands = {
+	["testencoding"] =
+		function(self)
+			local lines = {}
+			for i = #self.mainLines, 1, -1 do
+				lines[i] = "d("..self.mainLines[i]["lax"]..","..self.mainLines[i]["lay"]..","..self.mainLines[i]["lbx"]..","..self.mainLines[i]["lby"]..","..self.mainLines[i]["r"]..","..self.mainLines[i]["g"]..","..self.mainLines[i]["b"]..","..self.mainLines[i]["a"]..")"
+			end
+			--compress it up
+			local encoded = self.EncodeData({canvas=lines})
+			local decoded = self.DecodeData(encoded)
+		end;
 	["dumpvar"] = 
 		function(self)
 			print("Receiving canvas : " ..tostring(self.receivingCanvas))
