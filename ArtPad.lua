@@ -17,7 +17,12 @@
 -- c()			-- Clear Canvas
 -- f(<r>,<g>,<b>,<a>)	-- Change to given color
 -- t(<x>,<y>,"<t>")	-- Draw text t with bottom left corner at (x,y)
-
+local DEBUG = false;
+function printd(msg)
+	if DEBUG then 
+		print(msg)
+	end;
+end;
 ArtPad = LibStub("AceAddon-3.0"):NewAddon("MyAddon", "AceComm-3.0", "AceSerializer-3.0")
 -- [[ Version data from the TOC file ]]
 ArtPad.version = GetAddOnMetadata("ArtPad", "Version");
@@ -36,7 +41,7 @@ ArtPad.gotLineCount = false;
 
 -- [[ Event Handlers]]
 function ArtPad:Variables_Loaded()
-	--print("VAR LOADED");
+	--printd("VAR LOADED");
 end
 
 function ArtPad:Player_Login()
@@ -86,7 +91,7 @@ function ArtPad:Player_Login()
 
     -- [[ Start watching the persistence channel, with a backup timer incase nobody is around ]]
     self:RegisterComm(ArtPad.persist_prefix, ArtPad.Persist_Channel_Msg)
-    C_Timer.After(25, ArtPad.PersistTimer_Expired)
+    C_Timer.After(5, ArtPad.PersistTimer_Expired)
 
     -- [[ Request line count/avalability ]]
     self:SendCommMessage(ArtPad.persist_prefix,"l()",ArtPad_Settings["Mode"]);
@@ -114,7 +119,7 @@ end;
 
 function ArtPad.PersistTimer_Expired()
 	if not ArtPad.gotLineCount then
-		print("Nobody replied to canvas info request. Fresh canvas")
+		printd("Nobody replied to canvas info request. Fresh canvas")
 		ArtPad.missingLineCount = 0;
 		ArtPad.gotLineCount = true;
 		ArtPad:RegisterComm(ArtPad.main_prefix, ArtPad.Chat_Msg_Addon)
@@ -192,7 +197,8 @@ data.request = { {1,100} , {150,200} } -- table of ranges to request, identical 
 ]]
 function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 	local self = ArtPad;
-	print(prefix,message,disType,sender)
+	printd(prefix,message,disType,sender)
+
 	--broadcasts	
 	if prefix == self.persist_prefix and sender ~= UnitName("player") and disType == ArtPad_Settings["Mode"] then
 		--request line table
@@ -202,7 +208,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 			if self.gotLineCount then
 				table = {availability = self:GenerateAvailablityTable(), linecount = #self.mainLines}
 			end
-			print("Sending availability table")
+			printd("Sending availability table")
 			self:SendCommMessage(self.persist_prefix,self:EncodeData(table),"WHISPER",sender,"ALERT");
 			return;
 		end		
@@ -224,19 +230,27 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 		    		self:RegisterComm(ArtPad.main_prefix, ArtPad.Chat_Msg_Addon)
 		    		--start the timer to get new lines regularly
 		    		C_Timer.After(2, ArtPad.GetMissingLines)
-		    		print("Got linecount")					
+		    		printd("Got linecount")		
+	
 				end
 				--check if they have any lines we need and request them
 				local request_table = self:GenerateRequestTable(data.availability)
-				print("Requesting some lines")
-				self:SendCommMessage(self.persist_prefix,self:EncodeData({request=request_table}),"WHISPER",sender,"ALERT");
-				TRANSFER_TIMEOUT = 0;
-				C_Timer.After(2,ArtPad.TransferTimeoutCheck)
+				if #request_table ~= 0 then
+					printd("Requesting lines:")
+					for k , v in pairs(request_table) do
+						printd('istart '..tostring(v[1])..' iend '..tostring(v[2]))
+					end
+					GetMissingTimeout = 0;
+					self:SendCommMessage(self.persist_prefix,self:EncodeData({request=request_table}),"WHISPER",sender,"ALERT");
+					TRANSFER_TIMEOUT = 0;
+					self.receivingCanvas = true;
+					C_Timer.After(2,ArtPad.TransferTimeoutCheck)
+				end;
 			--sending info
 			elseif data.sending then
 			--someone is sending us some lines
 				local progress = data.sending
-				print("someone is sending us lines, progress %"..tostring(progress))
+				printd("someone is sending us lines, progress %"..tostring(progress))
 				self.receivingCanvas = true;				
 				if progress ~= 100 then
 					--reset the timeout clock
@@ -257,13 +271,13 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 				--compress it up
 				local to_send = self:EncodeData({lines=lines})
 				--whisper it back, can take a long time.. is async though
-				print("Sending lines")
+				printd("Sending lines")
 				self:SendCommMessage(self.persist_prefix,to_send,"WHISPER",sender,"BULK",self.SendMsg_Callback,sender)
 				self.sendingCanvas = true;
 
 			--they gave us some lines, draw them.
 			elseif data.lines then
-				print("got lines")
+				printd("got lines")
 				for i,line in pairs(data.lines) do
 					local x,y,a,b,brushR,brushG,brushB,brushA = string.match(line, "d%((%d+),(%d+),(%d+),(%d+),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*)%)");
 					if x then
@@ -281,25 +295,33 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 end;
 
 function ArtPad.TransferTimeoutCheck()
-	if TRANSFER_TIMEOUT < 5 then
+	if TRANSFER_TIMEOUT < 25 and ArtPad.receivingCanvas then
 		C_Timer.After(1,ArtPad.TransferTimeoutCheck)
 		TRANSFER_TIMEOUT = TRANSFER_TIMEOUT + 1;
-	else
-		print("Transfer timed out")
+	elseif ArtPad.receivingCanvas then
+		printd("Transfer timed out")
 		ArtPad.receivingCanvas = false;
 	end;
 end;
 
+local GetMissingTimeout = 0;
 function ArtPad.GetMissingLines()
 	local self = ArtPad;
 	if self.missingLineCount == 0 then
+		printd("got entire canvas")
 		return;
 	end;
-	if not self.receivingCanvas and self.missingLineCount > 0 then
-		print("Broadcasting for line availability")
-		self:SendCommMessage(ArtPad.persist_prefix,"l()",ArtPad_Settings["Mode"]);
+	if not self.receivingCanvas then
+		if GetMissingTimeout < 10 then
+			printd("Broadcasting for line availability")
+			self:SendCommMessage(ArtPad.persist_prefix,"l()",ArtPad_Settings["Mode"]);
+			GetMissingTimeout  = GetMissingTimeout + 1;
+			C_Timer.After(5, ArtPad.GetMissingLines)
+		else
+			printd("Couldn't get lines, giving up")
+			self.missingLineCount = 0;
+		end;
 	end;
-	--C_Timer.After(2, ArtPad.GetMissingLines)
 end
 
 function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
@@ -351,7 +373,7 @@ function ArtPad.SendMsg_Callback(arg,sent,total)
 	if sent == total then
 		ArtPad.sendingCanvas = false;
 	end
-	self:SendCommMessage(self.main_prefix,ArtPad:EncodeData({sending=progress}),"WHISPER",arg,"ALERT")
+	ArtPad:SendCommMessage(ArtPad.persist_prefix,ArtPad:EncodeData({sending=progress}),"WHISPER",arg,"ALERT")
 end
 
 function ArtPad:DecodeData(data)
@@ -359,13 +381,13 @@ function ArtPad:DecodeData(data)
 	--Decompress the decoded data
 	local decompressed, message = self.LibCompress:DecompressHuffman(decoded)
 	if(not decompressed) then
-		--print("ArtPad: error decompressing: " .. message)
+		printd("ArtPad: error decompressing: " .. message)
 		return nil
 	end		
 	-- Deserialize the decompressed data
 	local success, final = self:Deserialize(decompressed)
 	if (not success) then
-		print("ArtPad: error deserializing " .. final)
+		printd("ArtPad: error deserializing " .. final)
 		self._debug_decompressed = decompressed
 		return nil
 	end
@@ -691,6 +713,9 @@ function ArtPad:ValidateSender(sender)
 end;
 
 ArtPad.slashCommands = {
+	["debug"] = function(self)
+			DEBUG = true;
+		end;
 	["testencoding"] =
 		function(self)
 			local lines = {}
