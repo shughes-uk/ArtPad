@@ -165,7 +165,7 @@ function ArtPad:GenerateRequestTable(aval_table)
 			end;
 		end;
 		if start_rindex ~= range[2] + 1 then
-			if r_count + ((range[2]-1) - start_rindex) > REQUEST_MAX then
+			if r_count + ((range[2]) - start_rindex) > REQUEST_MAX then
 				table.insert(request_table, {start_rindex, start_rindex + (REQUEST_MAX - r_count)})
 			else
 				table.insert(request_table, {start_rindex, range[2]});
