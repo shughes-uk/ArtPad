@@ -236,7 +236,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 			elseif data.sending then
 			--someone is sending us some lines
 				local progress = data.sending
-				print("someone is sending us lines, progress %"..tostring(progress)
+				print("someone is sending us lines, progress %"..tostring(progress))
 				self.receivingCanvas = true;				
 				if progress ~= 100 then
 					--reset the timeout clock
