@@ -42,7 +42,6 @@ function ArtPad:Player_Login()
 	ArtPad.LibSerialize = LibStub:GetLibrary("AceSerializer-3.0")
 	ArtPad.LibCompress = LibStub:GetLibrary("LibCompress")
 	ArtPad.LibCompressEncode = ArtPad.LibCompress:GetAddonEncodeTable()
-	ArtPad.LibAceComms = LibStub:GetLibrary("AceComm-3.0")
 	-- [[ Sort settings ]]
 	local ArtPad_Settings_Default = {
 				["SaveVersion"]	= self.saveVersion;
@@ -81,8 +80,26 @@ function ArtPad:Player_Login()
     end
     -- [[ Start watching addon comms ]]
     self:RegisterComm(ArtPad.prefix, ArtPad.Chat_Msg_Addon)
+    self:RegisterComm("ArtPad_Version", ArtPad.Version_Msg)
+    --[[ Timer to watch for someone sending us the canvas, broadcast for the canvas ]]
     C_Timer.After(10, ArtPad.PersistTimer_Expired)
     self:SendCommMessage(ArtPad.prefix,"r()",ArtPad_Settings["Mode"]);
+    --[[ Broadcast our version ]]
+    self:SendCommMessage("ArtPad_Version",tostring(ArtPad.version),ArtPad_Settings["Mode"])
+
+end
+
+function ArtPad.Version_Msg(prefix, message, disType, sender)
+	local self = ArtPad;
+	if prefix == "ArtPad_Version" then
+		local their_version = tonumber(message)
+		if their_version then
+			if their_version > tonumber(ArtPad.version) then
+				-- new version out!
+				self.versionText:SetText("ArtPad v."..self.version.." - UPDATE AVAILABLE (v"..their_version..")");
+			end
+		end
+	end
 end
 
 function ArtPad:Player_Regen_Disabled()
