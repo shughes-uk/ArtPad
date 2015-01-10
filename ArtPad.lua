@@ -86,7 +86,7 @@ function ArtPad:Player_Login()
 
     -- [[ Start watching the persistence channel, with a backup timer incase nobody is around ]]
     self:RegisterComm(ArtPad.persist_prefix, ArtPad.Persist_Channel_Msg)
-    C_Timer.After(1, ArtPad.PersistTimer_Expired)
+    C_Timer.After(25, ArtPad.PersistTimer_Expired)
 
     -- [[ Request line count/avalability ]]
     self:SendCommMessage(ArtPad.persist_prefix,"l()",ArtPad_Settings["Mode"]);
@@ -192,6 +192,7 @@ data.request = { {1,100} , {150,200} } -- table of ranges to request, identical 
 ]]
 function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 	local self = ArtPad;
+	--print(prefix,message,disType,sender)
 	--broadcasts	
 	if prefix == self.persist_prefix and sender ~= UnitName("player") and disType == ArtPad_Settings["Mode"] then
 		--request line table
@@ -211,13 +212,13 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 		data = self:DecodeData(message);
 		if data then
 			--line availability table
-			if data.availability and not self.receivingCanvas and self.missingLineCount > 0 then
+			if data.availability and not self.receivingCanvas and (self.missingLineCount > 0 or not self.gotLineCount)  then
 				if not self.gotLineCount then
-					for i= 1, data.availability.linecount, 1 do
+					for i= 1, data.linecount, 1 do
 						table.insert(self.mainLines,false)
 					end
 					self.gotLineCount = true;
-					self.missingLineCount = data.availability.linecount;
+					self.missingLineCount = data.linecount;
 					--it's safe to subscribe to canvas drawing now as our indexing is set up correctly
 		    		self:RegisterComm(ArtPad.main_prefix, ArtPad.Chat_Msg_Addon)
 		    		--start the timer to get new lines regularly
@@ -225,9 +226,9 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 				end
 				--check if they have any lines we need and request them
 				local request_table = self:GenerateRequestTable(data.availability)
-				self:SendCommMessage(self.main_prefix,self.EncodeData({request=request_table}),"WHISPER",sender,"ALERT");
+				self:SendCommMessage(self.main_prefix,self:EncodeData({request=request_table}),"WHISPER",sender,"ALERT");
 				TRANSFER_TIMEOUT = 0;
-				C_Timer.After(1,ArtPad.TransferTimeoutCheck)
+				C_Timer.After(2,ArtPad.TransferTimeoutCheck)
 			--sending info
 			elseif data.sending then
 			--someone is sending us some lines
@@ -250,9 +251,9 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 					end
 				end
 				--compress it up
-				local to_send = self.EncodeData({lines=lines})
+				local to_send = self:EncodeData({lines=lines})
 				--whisper it back, can take a long time.. is async though
-				self:SendCommMessage(self.main_prefix,to_send,"WHISPER",sender,"BULK",self.SendMsg_Callback,sender)
+				self:SendCommMessage(self.persist_prefix,to_send,"WHISPER",sender,"BULK",self.SendMsg_Callback,sender)
 				self.sendingCanvas = true;
 
 			--they gave us some lines, draw them.
@@ -278,7 +279,7 @@ function ArtPad.TransferTimeoutCheck()
 		C_Timer.After(1,ArtPad.TransferTimeoutCheck)
 		TRANSFER_TIMEOUT = TRANSFER_TIMEOUT + 1;
 	else
-		self.receivingCanvas = false;
+		ArtPad.receivingCanvas = false;
 	end;
 end;
 
@@ -689,8 +690,8 @@ ArtPad.slashCommands = {
 				lines[i] = "d("..self.mainLines[i]["lax"]..","..self.mainLines[i]["lay"]..","..self.mainLines[i]["lbx"]..","..self.mainLines[i]["lby"]..","..self.mainLines[i]["r"]..","..self.mainLines[i]["g"]..","..self.mainLines[i]["b"]..","..self.mainLines[i]["a"]..")"
 			end
 			--compress it up
-			local encoded = self.EncodeData({canvas=lines})
-			local decoded = self.DecodeData(encoded)
+			local encoded = self:EncodeData({canvas=lines})
+			local decoded = self:DecodeData(encoded)
 		end;
 	["dumpvar"] = 
 		function(self)
