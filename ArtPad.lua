@@ -117,6 +117,8 @@ function ArtPad.PersistTimer_Expired()
 	if not ArtPad.canvasPersisted then
 		print("Nobody replied to canvas info request. Fresh canvas")
 		ArtPad.canvasPersisted = true;
+		ArtPad.missingLineCount = 0;
+		ArtPad.gotLineCount = true;
 		ArtPad:RegisterComm(ArtPad.main_prefix, ArtPad.Chat_Msg_Addon)
 	end
 end
@@ -193,7 +195,7 @@ data.request = { {1,100} , {150,200} } -- table of ranges to request, identical 
 function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 	local self = ArtPad;
 	--broadcasts	
-	if prefix == self.persist_prefix and sender ~= UnitName("plaryer") and disType == ArtPad_Settings["Mode"] then
+	if prefix == self.persist_prefix and sender ~= UnitName("player") and disType == ArtPad_Settings["Mode"] then
 		--request line table
 		local linecount_request = string.match(message, "l%(%)")
 		if linecount_request then
@@ -206,7 +208,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 		end		
 	end
 	--whispers
-	if prefix == self.persist_prefix and sender ~= UnitName("plrayer") and disType == "WHISPER" then
+	if prefix == self.persist_prefix and sender ~= UnitName("player") and disType == "WHISPER" then
 		--whispers are sent compressed/encoded unlike broadcasts as they can be an huge
 		data = self:DecodeData(message);
 		if data then
