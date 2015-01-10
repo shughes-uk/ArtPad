@@ -29,7 +29,6 @@ ArtPad.persist_prefix = "ArtPad_P"..ArtPad.protocolVersion;
 ArtPad.eventListener = CreateFrame("FRAME");
 -- [[ Canvas junk ]]
 ArtPad.canvasSize = {["X"] = 3840 ; ["Y"] = 2160 };
-ArtPad.canvasPersisted = false;
 ArtPad.sendingCanvas = false;
 ArtPad.receivingCanvas = false;
 ArtPad.missingLineCount = 0;
@@ -114,9 +113,8 @@ function ArtPad:Player_Regen_Disabled()
 end;
 
 function ArtPad.PersistTimer_Expired()
-	if not ArtPad.canvasPersisted then
+	if not ArtPad.gotLineCount then
 		print("Nobody replied to canvas info request. Fresh canvas")
-		ArtPad.canvasPersisted = true;
 		ArtPad.missingLineCount = 0;
 		ArtPad.gotLineCount = true;
 		ArtPad:RegisterComm(ArtPad.main_prefix, ArtPad.Chat_Msg_Addon)
@@ -697,7 +695,6 @@ ArtPad.slashCommands = {
 	["dumpvar"] = 
 		function(self)
 			print("Receiving canvas : " ..tostring(self.receivingCanvas))
-			print("Persisted : "..tostring(self.canvasPersisted))
 			print("Sending : "..tostring(self.sendingCanvas))
 		end;
 	["guild"] = 
