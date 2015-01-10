@@ -58,12 +58,14 @@ function ArtPad:Player_Login()
 				["Scale"]		= 1;
 				["MinimapIcon"] = {};
 				["OneTimeMessage"] = false;
+				["Debug"] = false;
 			};
 	if not ArtPad_Settings then
 		ArtPad_Settings = ArtPad_Settings_Default;
 	elseif ArtPad_Settings["SaveVersion"] < self.saveVersion then
 		ArtPad_Settings = ArtPad_Settings_Default;
 	end;
+	DEBUG = ArtPad_Settings["Debug"]
 	-- [[ Setup Canvas ]]
 	self:SetupMainFrame();
 
@@ -230,8 +232,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 		    		self:RegisterComm(ArtPad.main_prefix, ArtPad.Chat_Msg_Addon)
 		    		--start the timer to get new lines regularly
 		    		C_Timer.After(2, ArtPad.GetMissingLines)
-		    		printd("Got linecount")		
-	
+		    		printd("Got linecount")	
 				end
 				--check if they have any lines we need and request them
 				local request_table = self:GenerateRequestTable(data.availability)
@@ -714,7 +715,9 @@ end;
 
 ArtPad.slashCommands = {
 	["debug"] = function(self)
-			DEBUG = true;
+			ArtPad_Settings["Debug"] = not ArtPad_Settings["Debug"];
+			DEBUG =  not ArtPad_Settings["Debug"];
+			self:Message("Debug mode now: "..tostring(DEBUG))
 		end;
 	["testencoding"] =
 		function(self)
