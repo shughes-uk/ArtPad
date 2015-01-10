@@ -192,7 +192,7 @@ data.request = { {1,100} , {150,200} } -- table of ranges to request, identical 
 ]]
 function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 	local self = ArtPad;
-	--print(prefix,message,disType,sender)
+	print(prefix,message,disType,sender)
 	--broadcasts	
 	if prefix == self.persist_prefix and sender ~= UnitName("player") and disType == ArtPad_Settings["Mode"] then
 		--request line table
@@ -226,7 +226,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 				end
 				--check if they have any lines we need and request them
 				local request_table = self:GenerateRequestTable(data.availability)
-				self:SendCommMessage(self.main_prefix,self:EncodeData({request=request_table}),"WHISPER",sender,"ALERT");
+				self:SendCommMessage(self.persist_prefix,self:EncodeData({request=request_table}),"WHISPER",sender,"ALERT");
 				TRANSFER_TIMEOUT = 0;
 				C_Timer.After(2,ArtPad.TransferTimeoutCheck)
 			--sending info
