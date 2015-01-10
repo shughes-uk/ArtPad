@@ -17,10 +17,10 @@
 -- c()			-- Clear Canvas
 -- f(<r>,<g>,<b>,<a>)	-- Change to given color
 -- t(<x>,<y>,"<t>")	-- Draw text t with bottom left corner at (x,y)
-local DEBUG = false;
-function printd(msg)
-	if DEBUG then 
-		print(msg)
+function printd(...)
+	print(ArtPad.DEBUG)
+	if ArtPad.DEBUG then 		
+		print(...)
 	end;
 end;
 ArtPad = LibStub("AceAddon-3.0"):NewAddon("MyAddon", "AceComm-3.0", "AceSerializer-3.0")
@@ -38,7 +38,7 @@ ArtPad.sendingCanvas = false;
 ArtPad.receivingCanvas = false;
 ArtPad.missingLineCount = 0;
 ArtPad.gotLineCount = false;
-
+ArtPad.DEBUG = false;
 -- [[ Event Handlers]]
 function ArtPad:Variables_Loaded()
 	--printd("VAR LOADED");
@@ -65,7 +65,7 @@ function ArtPad:Player_Login()
 	elseif ArtPad_Settings["SaveVersion"] < self.saveVersion then
 		ArtPad_Settings = ArtPad_Settings_Default;
 	end;
-	DEBUG = ArtPad_Settings["Debug"]
+	ArtPad.DEBUG = ArtPad_Settings["Debug"]
 	-- [[ Setup Canvas ]]
 	self:SetupMainFrame();
 
@@ -205,11 +205,8 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 	if prefix == self.persist_prefix and sender ~= UnitName("player") and disType == ArtPad_Settings["Mode"] then
 		--request line table
 		local linecount_request = string.match(message, "l%(%)")
-		if linecount_request then
-			local table;
-			if self.gotLineCount then
-				table = {availability = self:GenerateAvailablityTable(), linecount = #self.mainLines}
-			end
+		if linecount_request and self.gotLineCount then
+			local table = {availability = self:GenerateAvailablityTable(), linecount = #self.mainLines}
 			printd("Sending availability table")
 			self:SendCommMessage(self.persist_prefix,self:EncodeData(table),"WHISPER",sender,"ALERT");
 			return;
@@ -716,8 +713,8 @@ end;
 ArtPad.slashCommands = {
 	["debug"] = function(self)
 			ArtPad_Settings["Debug"] = not ArtPad_Settings["Debug"];
-			DEBUG =  not ArtPad_Settings["Debug"];
-			self:Message("Debug mode now: "..tostring(DEBUG))
+			ArtPad.DEBUG = not ArtPad_Settings["Debug"];
+			self:Message("Debug mode now: "..tostring(ArtPad.DEBUG))
 		end;
 	["testencoding"] =
 		function(self)
