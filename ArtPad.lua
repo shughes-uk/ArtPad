@@ -151,14 +151,14 @@ function ArtPad:GenerateAvailablityTable()
 	return available_table
 end
 
-local REQUEST_MAX = 50;
+local REQUEST_MAX = 100;
 
 function ArtPad:GenerateRequestTable(aval_table)
 	local request_table = {};
 	local r_count = 0;
 	for k,range in pairs(aval_table) do
-		start_rindex = 1;
-		for i=range[1] , range[2] , 1  do
+		start_rindex = range[1];
+		for i=range[1] , math.min(range[2],#self.mainLines) , 1  do
 			if self.mainLines[i] then
 				if start_rindex ~= i then					
 					if r_count + ((i-1) - start_rindex) > REQUEST_MAX then
@@ -175,11 +175,11 @@ function ArtPad:GenerateRequestTable(aval_table)
 				end;
 			end;
 		end;
-		if start_rindex ~= range[2] + 1 then
-			if r_count + ((range[2]) - start_rindex) > REQUEST_MAX then
+		if start_rindex ~= math.min(range[2],#self.mainLines) + 1 then
+			if r_count + ((math.min(range[2],#self.mainLines)) - start_rindex) > REQUEST_MAX then
 				table.insert(request_table, {start_rindex, start_rindex + (REQUEST_MAX - r_count)})
 			else
-				table.insert(request_table, {start_rindex, range[2]});
+				table.insert(request_table, {start_rindex, math.min(range[2],#self.mainLines)});
 			end;
 		end;
 	end;
@@ -211,7 +211,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 		local linecount_request = string.match(message, "l%(%)")
 		if linecount_request and self.gotLineCount then
 			local table = {availability = self:GenerateAvailablityTable(), linecount = #self.mainLines}
-			printd("Sending availability table")
+			printd("Sending availability table to "..sender)
 			self:SendCommMessage(self.persist_prefix,self:EncodeData(table),"WHISPER",sender,"ALERT");
 			return;
 		end		
@@ -223,6 +223,9 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 		if data then
 			--line availability table
 			if data.availability and not self.receivingCanvas and (self.missingLineCount > 0 or not self.gotLineCount)  then
+				if sender == 'Ariaxu' then
+					ArtPad._table_debug = data.availability;
+				end;
 				if not self.gotLineCount then
 					for i= 1, data.linecount, 1 do
 						self.mainLines[i] = false;
@@ -233,12 +236,12 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 		    		self:RegisterComm(ArtPad.main_prefix, ArtPad.Chat_Msg_Addon)
 		    		--start the timer to get new lines regularly
 		    		C_Timer.After(2, ArtPad.GetMissingLines)
-		    		printd("Got linecount")	
+		    		printd("Got linecount from "..sender)	
 				end
 				--check if they have any lines we need and request them
 				local request_table = self:GenerateRequestTable(data.availability)
 				if #request_table ~= 0 then
-					printd("Requesting lines:")
+					printd("Requesting lines from "..sender.." :")
 					for k , v in pairs(request_table) do
 						printd('istart '..tostring(v[1])..' iend '..tostring(v[2]))
 					end
@@ -252,7 +255,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 			elseif data.sending then
 			--someone is sending us some lines
 				local progress = data.sending
-				printd("someone is sending us lines, progress %"..tostring(progress))		
+				printd(sender.." is sending us lines, progress %"..tostring(progress))		
 				if progress ~= 100 then
 					--reset the timeout clock
 					TRANSFER_TIMEOUT = 0;
@@ -272,7 +275,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 				--compress it up
 				local to_send = self:EncodeData({lines=lines})
 				--whisper it back, can take a long time.. is async though
-				printd("Sending lines")
+				printd("Sending lines to "..sender)
 				self:SendCommMessage(self.persist_prefix,to_send,"WHISPER",sender,"BULK",self.SendMsg_Callback,sender)
 				self.sendingCanvas = true;
 
@@ -320,6 +323,11 @@ function ArtPad.GetMissingLines()
 			C_Timer.After(1, ArtPad.GetMissingLines)
 		else
 			printd("Couldn't get lines, giving up")
+			for  i=#self.mainLines ,1, -1 do
+				if not self.mainLines[i] then
+					table.remove(self.mainLines,i)
+				end;
+			end;
 			self.missingLineCount = 0;
 		end;
 	else
