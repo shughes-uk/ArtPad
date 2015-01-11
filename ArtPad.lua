@@ -18,7 +18,6 @@
 -- f(<r>,<g>,<b>,<a>)	-- Change to given color
 -- t(<x>,<y>,"<t>")	-- Draw text t with bottom left corner at (x,y)
 function printd(...)
-	print(ArtPad.DEBUG)
 	if ArtPad.DEBUG then 		
 		print(...)
 	end;
@@ -39,6 +38,7 @@ ArtPad.receivingCanvas = false;
 ArtPad.missingLineCount = 0;
 ArtPad.gotLineCount = false;
 ArtPad.DEBUG = false;
+ArtPad.JustLoaded = true;
 -- [[ Event Handlers]]
 function ArtPad:Variables_Loaded()
 	--printd("VAR LOADED");
@@ -90,14 +90,18 @@ function ArtPad:Player_Login()
     -- [[ Version checking ]]
     self:RegisterComm("ArtPad_Version", ArtPad.Version_Msg)
     self:SendCommMessage("ArtPad_Version",tostring(ArtPad.version),ArtPad_Settings["Mode"])
+    self:RegisterComm(ArtPad.persist_prefix, ArtPad.Persist_Channel_Msg)    
+end;
 
-    -- [[ Start watching the persistence channel, with a backup timer incase nobody is around ]]
-    self:RegisterComm(ArtPad.persist_prefix, ArtPad.Persist_Channel_Msg)
-    C_Timer.After(5, ArtPad.PersistTimer_Expired)
-
-    -- [[ Request line count/avalability ]]
-    self:SendCommMessage(ArtPad.persist_prefix,"l()",ArtPad_Settings["Mode"]);
-end
+function ArtPad:Player_Entering_World()
+	if self.JustLoaded then
+		-- [[ Start watching the persistence channel, with a backup timer incase nobody is around ]]
+	    C_Timer.After(10, ArtPad.PersistTimer_Expired)
+	    -- [[ Request line count/avalability ]]
+	    self:SendCommMessage(ArtPad.persist_prefix,"l()",ArtPad_Settings["Mode"]);
+	    self.JustLoaded = false;
+   end;
+end;
 
 function ArtPad.Version_Msg(prefix, message, disType, sender)
 	local self = ArtPad;
@@ -199,7 +203,7 @@ data.request = { {1,100} , {150,200} } -- table of ranges to request, identical 
 ]]
 function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 	local self = ArtPad;
-	printd(prefix,message,disType,sender)
+	--printd(prefix,message,disType,sender)
 
 	--broadcasts	
 	if prefix == self.persist_prefix and sender ~= UnitName("player") and disType == ArtPad_Settings["Mode"] then
@@ -221,7 +225,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 			if data.availability and not self.receivingCanvas and (self.missingLineCount > 0 or not self.gotLineCount)  then
 				if not self.gotLineCount then
 					for i= 1, data.linecount, 1 do
-						table.insert(self.mainLines,false)
+						self.mainLines[i] = false;
 					end
 					self.gotLineCount = true;
 					self.missingLineCount = data.linecount;
@@ -238,7 +242,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 					for k , v in pairs(request_table) do
 						printd('istart '..tostring(v[1])..' iend '..tostring(v[2]))
 					end
-					GetMissingTimeout = 0;
+					ArtPad.GetMissingTimeout = 0;
 					self:SendCommMessage(self.persist_prefix,self:EncodeData({request=request_table}),"WHISPER",sender,"ALERT");
 					TRANSFER_TIMEOUT = 0;
 					self.receivingCanvas = true;
@@ -248,8 +252,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 			elseif data.sending then
 			--someone is sending us some lines
 				local progress = data.sending
-				printd("someone is sending us lines, progress %"..tostring(progress))
-				self.receivingCanvas = true;				
+				printd("someone is sending us lines, progress %"..tostring(progress))		
 				if progress ~= 100 then
 					--reset the timeout clock
 					TRANSFER_TIMEOUT = 0;
@@ -293,7 +296,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 end;
 
 function ArtPad.TransferTimeoutCheck()
-	if TRANSFER_TIMEOUT < 25 and ArtPad.receivingCanvas then
+	if TRANSFER_TIMEOUT < 5 and ArtPad.receivingCanvas then
 		C_Timer.After(1,ArtPad.TransferTimeoutCheck)
 		TRANSFER_TIMEOUT = TRANSFER_TIMEOUT + 1;
 	elseif ArtPad.receivingCanvas then
@@ -302,7 +305,7 @@ function ArtPad.TransferTimeoutCheck()
 	end;
 end;
 
-local GetMissingTimeout = 0;
+ArtPad.GetMissingTimeout = 0;
 function ArtPad.GetMissingLines()
 	local self = ArtPad;
 	if self.missingLineCount == 0 then
@@ -310,15 +313,17 @@ function ArtPad.GetMissingLines()
 		return;
 	end;
 	if not self.receivingCanvas then
-		if GetMissingTimeout < 10 then
+		if ArtPad.GetMissingTimeout < 10 then
 			printd("Broadcasting for line availability")
 			self:SendCommMessage(ArtPad.persist_prefix,"l()",ArtPad_Settings["Mode"]);
-			GetMissingTimeout  = GetMissingTimeout + 1;
-			C_Timer.After(5, ArtPad.GetMissingLines)
+			ArtPad.GetMissingTimeout  = ArtPad.GetMissingTimeout + 1;
+			C_Timer.After(1, ArtPad.GetMissingLines)
 		else
 			printd("Couldn't get lines, giving up")
 			self.missingLineCount = 0;
 		end;
+	else
+		C_Timer.After(1, ArtPad.GetMissingLines)
 	end;
 end
 
@@ -403,6 +408,7 @@ ArtPad.events = {
 	["VARIABLES_LOADED"] = ArtPad.Variables_Loaded;
 	["PLAYER_LOGIN"] = ArtPad.Player_Login;
 	["PLAYER_REGEN_DISABLED"] = ArtPad.Player_Regen_Disabled;
+	["PLAYER_ENTERING_WORLD"] = ArtPad.Player_Entering_World;
 };
 -- [[ Event Management ]]
 
@@ -713,7 +719,7 @@ end;
 ArtPad.slashCommands = {
 	["debug"] = function(self)
 			ArtPad_Settings["Debug"] = not ArtPad_Settings["Debug"];
-			ArtPad.DEBUG = not ArtPad_Settings["Debug"];
+			ArtPad.DEBUG = ArtPad_Settings["Debug"];
 			self:Message("Debug mode now: "..tostring(ArtPad.DEBUG))
 		end;
 	["testencoding"] =
@@ -1098,9 +1104,9 @@ function ArtPad:SendText(x, y, text)
 	ArtPad:SendCommMessage(ArtPad.main_prefix, msg, ArtPad_Settings["Mode"], nil, "BULK")
 end;
 
-function ArtPad:DrawLine(x, y, oldX, oldY, brush)
+function ArtPad:DrawLine(x, y, oldX, oldY, brush,index)
 	if oldX and oldY then
-		self:CreateLine(x,y, oldX, oldY, brush);
+		self:CreateLine(x,y, oldX, oldY, brush,index);
 	end;
 end;
 
@@ -1234,7 +1240,7 @@ function ArtPad:CreateLine(x, y, a, b, brush, index)
 	pix["b"] = brush.b
 	pix["a"] = brush.a
 	if index then
-		table.insert(self.mainLines, index, pix)
+		self.mainLines[index] = pix
 	else
 		table.insert(self.mainLines, pix);
 	end
