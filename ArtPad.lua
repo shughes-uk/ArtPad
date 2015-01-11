@@ -133,7 +133,7 @@ function ArtPad.PersistTimer_Expired()
 	elseif not ArtPad.gotLineCount then
 		C_Timer.After(5, ArtPad.PersistTimer_Expired)
 		ArtPad.PersistRetry = ArtPad.PersistRetry + 1;
-		self:SendCommMessage(ArtPad.persist_prefix,"l()",ArtPad_Settings["Mode"]);
+		ArtPad:SendCommMessage(ArtPad.persist_prefix,"l()",ArtPad_Settings["Mode"]);
 	end;
 
 end
