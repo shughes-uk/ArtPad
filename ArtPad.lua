@@ -96,7 +96,7 @@ end;
 function ArtPad:Player_Entering_World()
 	if self.JustLoaded then
 		-- [[ Start watching the persistence channel, with a backup timer incase nobody is around ]]
-	    C_Timer.After(10, ArtPad.PersistTimer_Expired)
+	    C_Timer.After(5, ArtPad.PersistTimer_Expired)
 	    -- [[ Request line count/avalability ]]
 	    self:SendCommMessage(ArtPad.persist_prefix,"l()",ArtPad_Settings["Mode"]);
 	    self.JustLoaded = false;
@@ -123,13 +123,19 @@ function ArtPad:Player_Regen_Disabled()
 	end;
 end;
 
+ArtPad.PersistRetry = 0;
 function ArtPad.PersistTimer_Expired()
-	if not ArtPad.gotLineCount then
+	if not ArtPad.gotLineCount and ArtPad.PersistRetry > 2 then
 		printd("Nobody replied to canvas info request. Fresh canvas")
 		ArtPad.missingLineCount = 0;
 		ArtPad.gotLineCount = true;
 		ArtPad:RegisterComm(ArtPad.main_prefix, ArtPad.Chat_Msg_Addon)
-	end
+	elseif not ArtPad.gotLineCount then
+		C_Timer.After(5, ArtPad.PersistTimer_Expired)
+		ArtPad.PersistRetry = ArtPad.PersistRetry + 1;
+		self:SendCommMessage(ArtPad.persist_prefix,"l()",ArtPad_Settings["Mode"]);
+	end;
+
 end
 
 function ArtPad:GenerateAvailablityTable()
@@ -1086,7 +1092,7 @@ ArtPad.junkTexts = {};
 function ArtPad:SendLine(x, y, oldX, oldY, brush)
 	if oldY and oldY then
 		local msg = "d("..x..","..y..","..oldX..","..oldY..","..brush.r..","..brush.g..","..brush.b..","..brush.a..")"
-		ArtPad:SendCommMessage(ArtPad.main_prefix, msg, ArtPad_Settings["Mode"], nil, "BULK")			
+		ArtPad:SendCommMessage(ArtPad.main_prefix, msg, ArtPad_Settings["Mode"], nil, "NORMAL")			
 	end;
 end;
 
@@ -1099,7 +1105,7 @@ function ArtPad:SendClear(x, y, oldX, oldY)
 	else
 		msg = "c()";
 	end;
-	ArtPad:SendCommMessage(ArtPad.main_prefix, msg, ArtPad_Settings["Mode"], nil, "BULK")	
+	ArtPad:SendCommMessage(ArtPad.main_prefix, msg, ArtPad_Settings["Mode"], nil, "ALERT")	
 end;
 
 function ArtPad:SendColor(r, g, b, a)
