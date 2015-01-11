@@ -1112,14 +1112,16 @@ end;
 
 function ArtPad:ClearLine(x, y, oldX, oldY)
 	for i = #self.mainLines, 1, -1 do
-		local px = self.mainLines[i]["lax"];
-		local py = self.mainLines[i]["lay"];
-		local qx = self.mainLines[i]["lbx"];
-		local qy = self.mainLines[i]["lby"];
-		-- TODO: Don't only check for intersections, but also min distance
-		-- http://www.softsurfer.com/Archive/algorithm_0106/algorithm_0106.htm
-		if self:LineLineIntersect(x,y,oldX,oldY,px,py,qx,qy) then
-			self:JunkLine(i);
+		if self.mainLines[i]  then 
+			local px = self.mainLines[i]["lax"];
+			local py = self.mainLines[i]["lay"];
+			local qx = self.mainLines[i]["lbx"];
+			local qy = self.mainLines[i]["lby"];
+			-- TODO: Don't only check for intersections, but also min distance
+			-- http://www.softsurfer.com/Archive/algorithm_0106/algorithm_0106.htm
+			if self:LineLineIntersect(x,y,oldX,oldY,px,py,qx,qy) then
+				self:JunkLine(i);
+			end;
 		end;
 	end;
 	for i = #self.mainTexts, 1, -1 do
