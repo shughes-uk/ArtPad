@@ -567,31 +567,30 @@ function ArtPad.OnMouseUp(frame, button)
 	self.state = "SLEEP";
 end;
 
-function ArtPad.OnMouseWheel(frame, delta)
-	--dont do anything if the shift key is down, dragging while zooming results in disaster!
-	if not (IsShiftKeyDown()) then
-		local self = frame.pad; -- Static Method
-		local oldScale = self.mainFrame:GetScale();
-		local newScale = oldScale + (oldScale*0.10*delta) ;
-		if 100 > newScale and newScale > 0.05 then
-			local curmx, curmy = GetCursorPosition();
-			curmx = curmx
-			curmy = curmy
-			local xl = self.mainFrame:GetLeft()* self.mainFrame:GetScale();
-			local w = self.mainFrame:GetWidth()* self.mainFrame:GetScale();
-			local f = (curmx - xl) / w
-			local new_w = newScale * self.mainFrame:GetWidth()
-			new_xl = curmx - (f*new_w)
-			local y_bottom = self.mainFrame:GetBottom()* self.mainFrame:GetScale();
-			local h = self.mainFrame:GetHeight()* self.mainFrame:GetScale();
-			local y_f = (curmy - y_bottom) / h
-			local new_h = newScale * self.mainFrame:GetHeight()
-			new_y_bottom = curmy - (y_f*new_h)
-			self.mainFrame:SetScale(newScale)
-			self.mainFrame:SetPoint("BOTTOMLEFT",new_xl/self.mainFrame:GetScale(),new_y_bottom/self.mainFrame:GetScale())
-		end
+function ArtPad.OnMouseWheel(frame, delta)	
+	local self = frame.pad; -- Static Method
+	--stop dragging, can cause problems otherwise
+	self.mainFrame:StopMovingOrSizing();
+	local oldScale = self.mainFrame:GetScale();
+	local newScale = oldScale + (oldScale*0.10*delta) ;
+	if 100 > newScale and newScale > 0.05 then
+		local curmx, curmy = GetCursorPosition();
+		curmx = curmx
+		curmy = curmy
+		local xl = self.mainFrame:GetLeft()* self.mainFrame:GetScale();
+		local w = self.mainFrame:GetWidth()* self.mainFrame:GetScale();
+		local f = (curmx - xl) / w
+		local new_w = newScale * self.mainFrame:GetWidth()
+		new_xl = curmx - (f*new_w)
+		local y_bottom = self.mainFrame:GetBottom()* self.mainFrame:GetScale();
+		local h = self.mainFrame:GetHeight()* self.mainFrame:GetScale();
+		local y_f = (curmy - y_bottom) / h
+		local new_h = newScale * self.mainFrame:GetHeight()
+		new_y_bottom = curmy - (y_f*new_h)
+		self.mainFrame:SetScale(newScale)
+		self.mainFrame:SetPoint("BOTTOMLEFT",new_xl/self.mainFrame:GetScale(),new_y_bottom/self.mainFrame:GetScale())
 	end;
-end
+end;
 
 -- [[ Override Handling ]]
 function ArtPad.OnShow(frame)
