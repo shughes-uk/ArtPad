@@ -107,6 +107,7 @@ function ArtPad.Version_Msg(prefix, message, disType, sender)
 	local self = ArtPad;
 	if prefix == "ArtPad_Version" then
 		local their_version = tonumber(message)
+		printd(sender,message)
 		if their_version then
 			if their_version > tonumber(ArtPad.version) then
 				-- new version out!
@@ -474,6 +475,7 @@ ArtPad.buttons = {
 			ColorPickerFrame.func, ColorPickerFrame.opacityFunc, ColorPickerFrame.cancelFunc = 
 			self.ColorPicker_Callback, self.ColorPicker_Callback, self.ColorPicker_Callback;
 			ColorPickerFrame:Hide(); -- Need to run the OnShow handler.
+			ColorPickerFrame:SetFrameStrata(self.mainFrame:GetFrameStrata())
 			ColorPickerFrame:Show();
 		end;
 	["ArtMode"] =
@@ -565,45 +567,27 @@ function ArtPad.OnMouseUp(frame, button)
 	self.state = "SLEEP";
 end;
 
-ArtPad.Desired_X_Ofs = 1;
-ArtPad.Desired_Y_Ofs = 1;
-ArtPad.Actual_X_Ofs = 0;
-ArtPad.Actual_Y_Ofs = 0;
-
 function ArtPad.OnMouseWheel(frame, delta)
 	local self = frame.pad; -- Static Method
-	local frameScale = self.mainFrame:GetScale();
-	local newScale = frameScale + (frameScale*0.10*delta) ;
+	local oldScale = self.mainFrame:GetScale();
+	local newScale = oldScale + (oldScale*0.10*delta) ;
 	if 100 > newScale and newScale > 0.05 then
 		local curmx, curmy = GetCursorPosition();
-		--mouse coords are subject to scaling because reasons
-		curmx = curmx/UIParent:GetScale();
-		curmy = curmy/UIParent:GetScale();	
-		if delta == 1 then			
-			self.CalcNewZoomOffset(curmx,curmy);			
-			newx = self.Actual_X_Ofs - (self.Actual_X_Ofs - self.Desired_X_Ofs)*0.10
-			newy = self.Actual_Y_Ofs - (self.Actual_Y_Ofs - self.Desired_Y_Ofs)*0.10
-		else 
-			self.Desired_X_Ofs = 0;
-			self.Desired_Y_Ofs = 0;			
-			newx = self.Actual_X_Ofs - (self.Actual_X_Ofs - self.Desired_X_Ofs)*0.40
-			newy = self.Actual_Y_Ofs - (self.Actual_Y_Ofs - self.Desired_Y_Ofs)*0.40
-		end
-		self.mainFrame:SetPoint("CENTER", newx/newScale, newy/newScale);
-		self.Actual_Y_Ofs = newy;
-		self.Actual_X_Ofs = newx;
+		curmx = curmx
+		curmy = curmy
+		local xl = self.mainFrame:GetLeft()* self.mainFrame:GetScale();
+		local w = self.mainFrame:GetWidth()* self.mainFrame:GetScale();
+		local f = (curmx - xl) / w
+		local new_w = newScale * self.mainFrame:GetWidth()
+		new_xl = curmx - (f*new_w)
+		local y_bottom = self.mainFrame:GetBottom()* self.mainFrame:GetScale();
+		local h = self.mainFrame:GetHeight()* self.mainFrame:GetScale();
+		local y_f = (curmy - y_bottom) / h
+		local new_h = newScale * self.mainFrame:GetHeight()
+		new_y_bottom = curmy - (y_f*new_h)
 		self.mainFrame:SetScale(newScale)
-		ArtPad_Settings["Scale"] = newScale
+		self.mainFrame:SetPoint("BOTTOMLEFT",new_xl/self.mainFrame:GetScale(),new_y_bottom/self.mainFrame:GetScale())
 	end
-end
-		
-function ArtPad.CalcNewZoomOffset(mx,my)
-	--magic math to work out how much we need to offset the center of the canvas by to make the zoom effect
-	local screen_Y_Center = (GetScreenHeight() * 0.5) ;
-	local screen_X_Center = (GetScreenWidth() * 0.5) ;
-	ArtPad.Desired_X_Ofs = screen_X_Center - mx + ArtPad.Actual_X_Ofs;
-	ArtPad.Desired_Y_Ofs = screen_Y_Center - my + ArtPad.Actual_Y_Ofs;	
-	return ArtPad.Desired_X_Ofs , ArtPad.Desired_Y_Ofs;
 end
 
 -- [[ Override Handling ]]
@@ -862,6 +846,29 @@ function ArtPad:SetupMainFrame()
 	self.canvasBackground:SetTexture(0,0,0,0.5);
 	self.canvasBackground:SetAllPoints(frameM);
 
+	local t_border=frameM:CreateTexture(nil,"HIGH")
+	t_border:SetTexture(1,1,1,0.7)
+	--border:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
+	t_border:SetPoint("TOPLEFT",0,0)
+	t_border:SetPoint("TOPRIGHT",0,-5)
+
+	local b_border=frameM:CreateTexture(nil,"HIGH")
+	b_border:SetTexture(1,1,1,0.7)
+	--border:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
+	b_border:SetPoint("BOTTOMLEFT",0,0)
+	b_border:SetPoint("BOTTOMRIGHT",0,self.canvasSize.Y+5)
+
+	local l_border=frameM:CreateTexture(nil,"HIGH")
+	l_border:SetTexture(1,1,1,0.7)
+	--border:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
+	l_border:SetPoint("TOPLEFT",0,0)
+	l_border:SetPoint("BOTTOMLEFT",5,0)
+
+	local r_border=frameM:CreateTexture(nil,"HIGH")
+	r_border:SetTexture(1,1,1,0.7)
+	--border:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
+	r_border:SetPoint("TOPRIGHT",0,0)
+	r_border:SetPoint("BOTTOMRIGHT",0,5)
 	
 
 	self.versionText = UIParent:CreateFontString(nil, "ARTWORK");
