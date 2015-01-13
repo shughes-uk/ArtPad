@@ -92,11 +92,7 @@ function AceComm:SendCommMessage(prefix, text, distribution, target, prio, callb
 		error('Usage: SendCommMessage(addon, "prefix", "text", "distribution"[, "target"[, "prio"[, callbackFn, callbackarg]]])', 2)
 	end
 	if distribution == "GUILD" and not GetGuildInfo("player") then 
-		return;
-	elseif distribution == "WHISPER" then
-		if not UnitIsConnected(target) then
-			return;
-		end;
+		return;	
 	end;
 	local textlen = #text
 	local maxtextlen = 255  -- Yes, the max is 255 even if the dev post said 256. I tested. Char 256+ get silently truncated. /Mikk, 20110327
