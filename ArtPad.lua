@@ -568,26 +568,29 @@ function ArtPad.OnMouseUp(frame, button)
 end;
 
 function ArtPad.OnMouseWheel(frame, delta)
-	local self = frame.pad; -- Static Method
-	local oldScale = self.mainFrame:GetScale();
-	local newScale = oldScale + (oldScale*0.10*delta) ;
-	if 100 > newScale and newScale > 0.05 then
-		local curmx, curmy = GetCursorPosition();
-		curmx = curmx
-		curmy = curmy
-		local xl = self.mainFrame:GetLeft()* self.mainFrame:GetScale();
-		local w = self.mainFrame:GetWidth()* self.mainFrame:GetScale();
-		local f = (curmx - xl) / w
-		local new_w = newScale * self.mainFrame:GetWidth()
-		new_xl = curmx - (f*new_w)
-		local y_bottom = self.mainFrame:GetBottom()* self.mainFrame:GetScale();
-		local h = self.mainFrame:GetHeight()* self.mainFrame:GetScale();
-		local y_f = (curmy - y_bottom) / h
-		local new_h = newScale * self.mainFrame:GetHeight()
-		new_y_bottom = curmy - (y_f*new_h)
-		self.mainFrame:SetScale(newScale)
-		self.mainFrame:SetPoint("BOTTOMLEFT",new_xl/self.mainFrame:GetScale(),new_y_bottom/self.mainFrame:GetScale())
-	end
+	--dont do anything if the shift key is down, dragging while zooming results in disaster!
+	if not (IsShiftKeyDown()) then
+		local self = frame.pad; -- Static Method
+		local oldScale = self.mainFrame:GetScale();
+		local newScale = oldScale + (oldScale*0.10*delta) ;
+		if 100 > newScale and newScale > 0.05 then
+			local curmx, curmy = GetCursorPosition();
+			curmx = curmx
+			curmy = curmy
+			local xl = self.mainFrame:GetLeft()* self.mainFrame:GetScale();
+			local w = self.mainFrame:GetWidth()* self.mainFrame:GetScale();
+			local f = (curmx - xl) / w
+			local new_w = newScale * self.mainFrame:GetWidth()
+			new_xl = curmx - (f*new_w)
+			local y_bottom = self.mainFrame:GetBottom()* self.mainFrame:GetScale();
+			local h = self.mainFrame:GetHeight()* self.mainFrame:GetScale();
+			local y_f = (curmy - y_bottom) / h
+			local new_h = newScale * self.mainFrame:GetHeight()
+			new_y_bottom = curmy - (y_f*new_h)
+			self.mainFrame:SetScale(newScale)
+			self.mainFrame:SetPoint("BOTTOMLEFT",new_xl/self.mainFrame:GetScale(),new_y_bottom/self.mainFrame:GetScale())
+		end
+	end;
 end
 
 -- [[ Override Handling ]]
@@ -848,32 +851,27 @@ function ArtPad:SetupMainFrame()
 
 	local t_border=frameM:CreateTexture(nil,"HIGH")
 	t_border:SetTexture(1,1,1,0.7)
-	--border:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
 	t_border:SetPoint("TOPLEFT",0,0)
 	t_border:SetPoint("TOPRIGHT",0,-5)
 
 	local b_border=frameM:CreateTexture(nil,"HIGH")
 	b_border:SetTexture(1,1,1,0.7)
-	--border:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
 	b_border:SetPoint("BOTTOMLEFT",0,0)
 	b_border:SetPoint("BOTTOMRIGHT",0,self.canvasSize.Y+5)
 
 	local l_border=frameM:CreateTexture(nil,"HIGH")
 	l_border:SetTexture(1,1,1,0.7)
-	--border:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
 	l_border:SetPoint("TOPLEFT",0,0)
 	l_border:SetPoint("BOTTOMLEFT",5,0)
 
 	local r_border=frameM:CreateTexture(nil,"HIGH")
 	r_border:SetTexture(1,1,1,0.7)
-	--border:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
 	r_border:SetPoint("TOPRIGHT",0,0)
 	r_border:SetPoint("BOTTOMRIGHT",0,5)
 	
 
 	self.versionText = UIParent:CreateFontString(nil, "ARTWORK");
 	self.versionText:SetPoint("TOP", UIParent, "TOP", 10, -10);
-	--self.versionText:SetTextColor(0, 0, 0, 1);
 	self.versionText:SetFont("Fonts\\FRIZQT__.TTF",16);
 	self.versionText:SetJustifyH("LEFT")
 	self.versionText:SetText("ArtPad v."..self.version);
