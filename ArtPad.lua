@@ -890,11 +890,16 @@ function ArtPad:SetupMainFrame()
 	self.cpicker_button:SetFrameStrata("FULLSCREEN")
 	self.cpicker_button:Hide()
 	--texture
+	local cpicker_htex = self.cpicker_button:CreateTexture()
+	cpicker_htex:SetTexture(0.15, 0.48, 0, 0.5)
+	cpicker_htex:SetTexCoord(0, 0.625, 0, 0.6875)
+	cpicker_htex:SetAllPoints()
+	self.cpicker_button:SetHighlightTexture(cpicker_htex)
+
 	local cpicker_button_tex = cpicker_button:CreateTexture(nil, "ARTWORK");
 	cpicker_button_tex:SetTexture(1,1,1,1);
 	cpicker_button_tex:SetAllPoints()
 	cpicker_button:SetNormalTexture(cpicker_button_tex);	
-	cpicker_button:SetHighlightTexture("Interface/Buttons/UI-Panel-Button-Highlight")
 	self.brushColorSample = cpicker_button_tex;
 
 	--text_button
@@ -912,19 +917,19 @@ function ArtPad:SetupMainFrame()
 
 	--textures
 	local tb_ntex = self.text_button:CreateTexture()
-	tb_ntex:SetTexture("Interface/Buttons/UI-Panel-Button-Up")
+	tb_ntex:SetTexture(0, 0, 0, 0.6875)
 	tb_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
 	tb_ntex:SetAllPoints()	
 	self.text_button:SetNormalTexture(tb_ntex)
 	
 	local tb_htex = self.text_button:CreateTexture()
-	tb_htex:SetTexture("Interface/Buttons/UI-Panel-Button-Highlight")
+	tb_htex:SetTexture(0.15, 0.48, 0, 0.5)
 	tb_htex:SetTexCoord(0, 0.625, 0, 0.6875)
 	tb_htex:SetAllPoints()
 	self.text_button:SetHighlightTexture(tb_htex)
 	
 	local tb_ptex = self.text_button:CreateTexture()
-	tb_ptex:SetTexture("Interface/Buttons/UI-Panel-Button-Down")
+	tb_ptex:SetTexture(0, 0, 0, 0.8)
 	tb_ptex:SetTexCoord(0, 0.625, 0, 0.6875)
 	tb_ptex:SetAllPoints()
 	self.text_button:SetPushedTexture(tb_ptex)
@@ -944,21 +949,19 @@ function ArtPad:SetupMainFrame()
 	
 	--textures
 	local c_ntex = self.clear_button:CreateTexture()
-	c_ntex:SetTexture("Interface/Buttons/UI-Panel-Button-Up")
-	c_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
+	c_ntex:SetTexture(0, 0, 0, 0.6875)
 	c_ntex:SetAllPoints()	
 	self.clear_button:SetNormalTexture(c_ntex)
 
 	
 	local c_htex = self.clear_button:CreateTexture()
-	c_htex:SetTexture("Interface/Buttons/UI-Panel-Button-Highlight")
-	c_htex:SetTexCoord(0, 0.625, 0, 0.6875)
+	c_htex:SetTexture(0.15, 0.48, 0, 0.5)
+	c_htex:SetTexCoord(0, 0.6, 0, 0.6)
 	c_htex:SetAllPoints()
 	self.clear_button:SetHighlightTexture(c_htex)
 	
 	local c_ptex = self.clear_button:CreateTexture()
-	c_ptex:SetTexture("Interface/Buttons/UI-Panel-Button-Down")
-	c_ptex:SetTexCoord(0, 0.625, 0, 0.6875)
+	c_ptex:SetTexture(0, 0, 0, 0.8)
 	c_ptex:SetAllPoints()
 	self.clear_button:SetPushedTexture(c_ptex)
 
@@ -977,20 +980,20 @@ function ArtPad:SetupMainFrame()
 	
 	--textures
 	local am_ntex = self.artmode_button:CreateTexture()
-	am_ntex:SetTexture("Interface/Buttons/UI-Panel-Button-Up")
+	am_ntex:SetTexture(0, 0, 0, 0.6875)
 	am_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
 	am_ntex:SetAllPoints()	
 	self.artmode_button:SetNormalTexture(am_ntex)
 
 	
 	local am_htex = self.artmode_button:CreateTexture()
-	am_htex:SetTexture("Interface/Buttons/UI-Panel-Button-Highlight")
+	am_htex:SetTexture(0.15, 0.48, 0, 0.5)
 	am_htex:SetTexCoord(0, 0.625, 0, 0.6875)
 	am_htex:SetAllPoints()
 	self.artmode_button:SetHighlightTexture(am_htex)
 	
 	local am_ptex = self.artmode_button:CreateTexture()
-	am_ptex:SetTexture("Interface/Buttons/UI-Panel-Button-Down")
+	am_ptex:SetTexture(0, 0, 0, 0.8)
 	am_ptex:SetTexCoord(0, 0.625, 0, 0.6875)
 	am_ptex:SetAllPoints()
 	self.artmode_button:SetPushedTexture(am_ptex)
