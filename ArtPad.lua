@@ -22,6 +22,7 @@ function printd(...)
 		print(...)
 	end;
 end;
+
 ArtPad = LibStub("AceAddon-3.0"):NewAddon("MyAddon", "AceComm-3.0", "AceSerializer-3.0")
 -- [[ Version data from the TOC file ]]
 ArtPad.version = GetAddOnMetadata("ArtPad", "Version");
@@ -483,11 +484,19 @@ ArtPad.buttons = {
 			local self = frame.pad;
 			if self.mainFrame:GetFrameStrata() == "BACKGROUND" then
 				self.mainFrame:SetFrameStrata("FULLSCREEN");
-				self.canvasBackground:SetTexture(0,0,0,0.8);
+				self.controlsFrame:SetFrameStrata("TOOLTIP")
+				self.canvasBackground:SetTexture(0,0,0,1);
 			else
 				self.mainFrame:SetFrameStrata("BACKGROUND");
+				self.controlsFrame:SetFrameStrata("BACKGROUND")
 				self.canvasBackground:SetTexture(0,0,0,0.5);
 			end
+		end;
+	["Center"] = 
+		function (frame, button, down)
+			local self = frame.pad;
+			self.mainFrame:ClearAllPoints();
+			self.mainFrame:SetPoint("CENTER")
 		end;
 
 };
@@ -608,12 +617,7 @@ function ArtPad.OnShow(frame)
 
 		artpadLauncher.icon = "Interface\\AddOns\\Artpad\\icon"
 
-		self.text_button:Show()
-		self.cpicker_button:Show()
-		self.clear_button:Show()
-		self.secretFrame:Show()
-		self.versionText:Show()
-		self.artmode_button:Show()
+		self.controlsFrame:Show()
 	end
 end;
 
@@ -621,13 +625,7 @@ function ArtPad.OnHide(frame)
 	local self = frame.pad; -- Static Method
 	-- Clear Override
 	ClearOverrideBindings(self.mainFrame);
-	self.text_button:Hide()
-	self.cpicker_button:Hide()
-	self.textInput:Hide()
-	self.clear_button:Hide()
-	self.secretFrame:Hide()
-	self.versionText:Hide()
-	self.artmode_button:Hide()
+	self.controlsFrame:Hide()
 end;
 
 -- [[ Tracking Functions ]]
@@ -818,8 +816,10 @@ ArtPad.mainFrame = nil;	-- For input/output
 ArtPad.textInput = nil;
 
 ArtPad.brushColorSample = nil;
+ArtPad.controls = {};
 
 function ArtPad:SetupMainFrame()
+	--[[ Canvas setup ]]
 	local frameM = CreateFrame("Frame", nil, nil);
 
 	self.mainFrame = frameM;
@@ -834,20 +834,10 @@ function ArtPad:SetupMainFrame()
 	frameM:SetClampedToScreen(false);
 	frameM:Hide();
 
-	local frameT = CreateFrame("EditBox", nil, UIParent);
-	self.textInput = frameT;
-	self.textInput.pad = self;
-
-	frameT:SetPoint("BOTTOMLEFT", frameM, "TOP", -110, -100);
-	frameT:SetPoint("TOPRIGHT", frameM, "TOP", 110, -80);
-	frameT:SetFont("Fonts\\FRIZQT__.TTF",18);
-	frameT:SetFrameStrata("TOOLTIP");
-	frameT:Hide();
-
 	self.canvasBackground = frameM:CreateTexture(nil, "BACKGROUND");
 	self.canvasBackground:SetTexture(0,0,0,0.5);
 	self.canvasBackground:SetAllPoints(frameM);
-
+	-- Border textures
 	local t_border=frameM:CreateTexture(nil,"HIGH")
 	t_border:SetTexture(1,1,1,0.7)
 	t_border:SetPoint("TOPLEFT",0,0)
@@ -866,163 +856,52 @@ function ArtPad:SetupMainFrame()
 	local r_border=frameM:CreateTexture(nil,"HIGH")
 	r_border:SetTexture(1,1,1,0.7)
 	r_border:SetPoint("TOPRIGHT",0,0)
-	r_border:SetPoint("BOTTOMRIGHT",0,5)
-	
+	r_border:SetPoint("BOTTOMRIGHT",0,5)	
 
-	self.versionText = UIParent:CreateFontString(nil, "ARTWORK");
-	self.versionText:SetPoint("TOP", UIParent, "TOP", 10, -10);
+	--[[ Controls frame ]]
+	self.controlsFrame = CreateFrame("FRAME", nil , UIParent)
+	self.controlsFrame:SetHeight(45)
+	self.controlsFrame:SetPoint("TOP", UIParent, "TOP", 0, -40);
+	self.controlsFrame:Hide()
+	--controls texture
+	local controls_tx = self.controlsFrame:CreateTexture(nil, "BACKGROUND");
+	controls_tx:SetTexture(0,0,0,0);
+	controls_tx:SetAllPoints(self.controlsFrame);
+	--other controls setup
+	self:CreateControls()
+	self:OrganizeControls()
+
+	-- [[ Version Text ]]
+	self.versionText = self.controlsFrame:CreateFontString(nil, "ARTWORK");
+	self.versionText:SetPoint("BOTTOM",  self.controlsFrame, "TOP", 0, 5);
 	self.versionText:SetFont("Fonts\\FRIZQT__.TTF",16);
 	self.versionText:SetJustifyH("LEFT")
 	self.versionText:SetText("ArtPad v."..self.version);
-	self.versionText:Hide()
-
-
-	--colorpicker_button	
-	--buttonframe
-	self.cpicker_button = CreateFrame("Button", "cpicker_button", UIParent);
-	self.cpicker_button:SetPoint("TOP", UIParent, "TOP", 10, -40);
-	self.cpicker_button:SetWidth(100);
-	self.cpicker_button:SetHeight(40);
-	self.cpicker_button:SetText("Color Picker");
-	self.cpicker_button:SetScript("OnClick", self.buttons["ColorPicker"]);
-	self.cpicker_button.pad = self;
-	self.cpicker_button:SetNormalFontObject("GameFontNormalLarge");
-	self.cpicker_button:SetFrameStrata("FULLSCREEN")
-	self.cpicker_button:Hide()
-	--texture
-	local cpicker_htex = self.cpicker_button:CreateTexture()
-	cpicker_htex:SetTexture(0.15, 0.48, 0, 0.5)
-	cpicker_htex:SetTexCoord(0, 0.625, 0, 0.6875)
-	cpicker_htex:SetAllPoints()
-	self.cpicker_button:SetHighlightTexture(cpicker_htex)
-
-	local cpicker_button_tex = cpicker_button:CreateTexture(nil, "ARTWORK");
-	cpicker_button_tex:SetTexture(1,1,1,1);
-	cpicker_button_tex:SetAllPoints()
-	cpicker_button:SetNormalTexture(cpicker_button_tex);	
-	self.brushColorSample = cpicker_button_tex;
-
-	--text_button
-	--buttonframe
-	self.text_button = CreateFrame("Button", "text_button", UIParent)
-	self.text_button:SetPoint("TOP", UIParent, "TOP", -100, -40)
-	self.text_button:SetWidth(100)
-	self.text_button:SetHeight(40)
-	self.text_button:SetScript("OnClick", self.buttons["Text"]);
-	self.text_button.pad = self;
-	self.text_button:SetText("Text")
-	self.text_button:SetNormalFontObject("GameFontNormalLarge")
-	self.text_button:SetFrameStrata("FULLSCREEN")
-	self.text_button:Hide()
-
-	--textures
-	local tb_ntex = self.text_button:CreateTexture()
-	tb_ntex:SetTexture(0, 0, 0, 0.6875)
-	tb_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
-	tb_ntex:SetAllPoints()	
-	self.text_button:SetNormalTexture(tb_ntex)
 	
-	local tb_htex = self.text_button:CreateTexture()
-	tb_htex:SetTexture(0.15, 0.48, 0, 0.5)
-	tb_htex:SetTexCoord(0, 0.625, 0, 0.6875)
-	tb_htex:SetAllPoints()
-	self.text_button:SetHighlightTexture(tb_htex)
-	
-	local tb_ptex = self.text_button:CreateTexture()
-	tb_ptex:SetTexture(0, 0, 0, 0.8)
-	tb_ptex:SetTexCoord(0, 0.625, 0, 0.6875)
-	tb_ptex:SetAllPoints()
-	self.text_button:SetPushedTexture(tb_ptex)
+	local frameT = CreateFrame("EditBox", nil, self.controlsFrame);
+	self.textInput = frameT;
+	self.textInput.pad = self;
+	self.textInput:SetWidth(300)
+	self.textInput:SetHeight(30)
+	frameT:SetPoint("TOP", self.controlsFrame, "BOTTOM", 0, 0);
+	frameT:SetPoint("LEFT")
+	frameT:SetFont("Fonts\\FRIZQT__.TTF",18);
+	frameT:SetFrameStrata("TOOLTIP");
+	frameT:Hide();
 
-	--clear_button
-	--buttonframe
-	self.clear_button = CreateFrame("Button", "clear_button", UIParent)
-	self.clear_button:SetPoint("TOP", UIParent, "TOP", 120, -40)
-	self.clear_button:SetWidth(110)
-	self.clear_button:SetHeight(40)	
-	self.clear_button:SetText("Clear Canvas")
-	self.clear_button:SetNormalFontObject("GameFontNormalLarge")
-	self.clear_button:SetScript("OnClick", self.buttons["Clear"]);
-	self.clear_button.pad = self;
-	self.clear_button:SetFrameStrata("FULLSCREEN")
-	self.clear_button:Hide()
-	
-	--textures
-	local c_ntex = self.clear_button:CreateTexture()
-	c_ntex:SetTexture(0, 0, 0, 0.6875)
-	c_ntex:SetAllPoints()	
-	self.clear_button:SetNormalTexture(c_ntex)
-
-	
-	local c_htex = self.clear_button:CreateTexture()
-	c_htex:SetTexture(0.15, 0.48, 0, 0.5)
-	c_htex:SetTexCoord(0, 0.6, 0, 0.6)
-	c_htex:SetAllPoints()
-	self.clear_button:SetHighlightTexture(c_htex)
-	
-	local c_ptex = self.clear_button:CreateTexture()
-	c_ptex:SetTexture(0, 0, 0, 0.8)
-	c_ptex:SetAllPoints()
-	self.clear_button:SetPushedTexture(c_ptex)
-
-	--artmode_button
-	--buttonframe
-	self.artmode_button = CreateFrame("Button", "artmode_button", UIParent)
-	self.artmode_button:SetPoint("TOP", UIParent, "TOP", 240, -40)
-	self.artmode_button:SetWidth(120)
-	self.artmode_button:SetHeight(40)	
-	self.artmode_button:SetText("Toggle ArtMode")
-	self.artmode_button:SetNormalFontObject("GameFontNormalLarge")
-	self.artmode_button:SetScript("OnClick", self.buttons["ArtMode"]);
-	self.artmode_button.pad = self;
-	self.artmode_button:SetFrameStrata("FULLSCREEN")
-	self.artmode_button:Hide()
-	
-	--textures
-	local am_ntex = self.artmode_button:CreateTexture()
-	am_ntex:SetTexture(0, 0, 0, 0.6875)
-	am_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
-	am_ntex:SetAllPoints()	
-	self.artmode_button:SetNormalTexture(am_ntex)
-
-	
-	local am_htex = self.artmode_button:CreateTexture()
-	am_htex:SetTexture(0.15, 0.48, 0, 0.5)
-	am_htex:SetTexCoord(0, 0.625, 0, 0.6875)
-	am_htex:SetAllPoints()
-	self.artmode_button:SetHighlightTexture(am_htex)
-	
-	local am_ptex = self.artmode_button:CreateTexture()
-	am_ptex:SetTexture(0, 0, 0, 0.8)
-	am_ptex:SetTexCoord(0, 0.625, 0, 0.6875)
-	am_ptex:SetAllPoints()
-	self.artmode_button:SetPushedTexture(am_ptex)
-
-	--escape_button_thing
+	--escape_button
 	self.escape_button = CreateFrame("Button", "ArtPad_MainFrame_Close", UIParent);
 	self.escape_button:SetScript("OnClick", self.buttons["Close"]);
 	self.escape_button.pad = self;
 	self.escape_button:Hide()
-	
+
 	self.mainFrame:SetScript("OnEnter", self.OnEnter);
 	self.mainFrame:SetScript("OnLeave", self.OnLeave);
 
-	self.secretFrame = CreateFrame("Frame", nil, nil);
-	self.secretFrame:SetScript("OnMouseWheel", self.OnMouseWheel);
-	self.secretFrame:EnableMouseWheel(true);
-	self.secretFrame.pad = self;
-
-	self.secretFrame:SetWidth(4096);
-	self.secretFrame:SetHeight(2160);
-	self.secretFrame:SetScale(1);
-	self.secretFrame:SetPoint("CENTER");
-	self.secretFrame:SetClampedToScreen(false);
-	self.secretFrame:Hide()
-
-	self.mainFrame:EnableMouse(true);	
-
+	self.mainFrame:EnableMouse(true);
 	self.mainFrame:SetScript("OnMouseDown", self.OnMouseDown);
-	self.mainFrame:SetScript("OnMouseUp", self.OnMouseUp);
+	self.mainFrame:SetScript("OnMouseUp", self.OnMouseUp);	
+	self.mainFrame:SetScript("OnMouseWheel", self.OnMouseWheel);
 
 	self.mainFrame:SetScript("OnShow", self.OnShow);
 	self.mainFrame:SetScript("OnHide", self.OnHide);
@@ -1031,6 +910,79 @@ function ArtPad:SetupMainFrame()
 	self.textInput:SetScript("OnEscapePressed", self.OnTextEscape);
 
 end;
+
+function ArtPad:CreateControls()
+	local tx_button =  self:CreateButton("text_button",self.buttons["Text"],"Text", 50)
+
+	local am_button = self:CreateButton("artmode_button", self.buttons["ArtMode"], "Toggle ArtMode")
+
+	local clear_button = self:CreateButton("clear_button", self.buttons["Clear"], "Clear Canvas")
+
+	local cpicker_button = self:CreateButton("cpicker_button", self.buttons["ColorPicker"], "Color Picker")
+	local cpicker_sample_tx = cpicker_button:CreateTexture(nil, "OVERLAY");
+	cpicker_sample_tx:SetTexture(1,1,1,1);
+	cpicker_sample_tx:SetHeight(10)
+	cpicker_sample_tx:SetPoint("BOTTOM")
+	cpicker_sample_tx:SetPoint("LEFT")
+	cpicker_sample_tx:SetPoint("RIGHT")
+	self.brushColorSample = cpicker_sample_tx;
+
+	local center_button = self:CreateButton("center_button", self.buttons["Center"], "Recenter Canvas")
+
+	self.controls[1] = tx_button;
+	self.controls[2] = am_button
+	self.controls[3] = clear_button
+	self.controls[4] = cpicker_button
+	self.controls[5] = center_button
+end
+
+function ArtPad:CreateButton(name,func,text,wpadding,hpadding)
+	wpadding = wpadding or 20
+	hpadding = hpadding or 20
+	--center_button
+	--buttonframe
+	local button = CreateFrame("Button", name, self.controlsFrame)
+	
+	button:SetText(text)
+	button:SetNormalFontObject("GameFontNormalLarge")
+	button:SetScript("OnClick", func);
+	button.pad = self;
+	button:SetFrameStrata("FULLSCREEN")
+	button:SetWidth(button:GetTextWidth() + wpadding)
+	button:SetHeight(button:GetTextHeight() + hpadding)	
+	
+	--textures
+	local button_ntex = button:CreateTexture()
+	button_ntex:SetTexture(0, 0, 0, 0.6875)
+	button_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
+	button_ntex:SetAllPoints()	
+	button:SetNormalTexture(button_ntex)
+
+	
+	local button_htext = button:CreateTexture()
+	button_htext:SetTexture(0.15, 0.48, 0, 0.5)
+	button_htext:SetTexCoord(0, 0.625, 0, 0.6875)
+	button_htext:SetAllPoints()
+	button:SetHighlightTexture(button_htext)
+	
+	local button_ptext = button:CreateTexture()
+	button_ptext:SetTexture(0, 0, 0, 0.8)
+	button_ptext:SetTexCoord(0, 0.625, 0, 0.6875)
+	button_ptext:SetAllPoints()
+	button:SetPushedTexture(button_ptext)
+	return button;
+end
+
+function ArtPad:OrganizeControls()
+	local current_x = 0;
+	for n,control in pairs(self.controls) do
+		control:SetPoint("LEFT", self.controlsFrame, "LEFT", current_x, 0)
+		control:SetPoint("TOP")
+		control:SetPoint("BOTTOM")
+		current_x = current_x + control:GetWidth();
+	end
+	self.controlsFrame:SetWidth(current_x)
+end
 
 function ArtPad.FrameMouseDown(frame)
 	if (IsShiftKeyDown()) then
