@@ -1,6 +1,6 @@
 ## Interface: 60200
 ## Title: ArtPad
-## Version: 9.02
+## Version: 9.03
 ## X-SaveVersion: 3
 ## X-ProtocolVersion: 3
 ## Author: Dust, Turalyon-EU & Snaxxramas, Defias Brotherhood-EU
