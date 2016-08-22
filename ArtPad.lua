@@ -18,7 +18,7 @@
 -- f(<r>,<g>,<b>,<a>)	-- Change to given color
 -- t(<x>,<y>,"<t>")	-- Draw text t with bottom left corner at (x,y)
 function printd(...)
-	if ArtPad.DEBUG then 		
+	if ArtPad.DEBUG then
 		print(...)
 	end;
 end;
@@ -78,7 +78,7 @@ function ArtPad:Player_Login()
             type = "launcher",
             icon = "Interface\\AddOns\\Artpad\\icon",
             OnClick = self.MiniMapClick,
-            OnTooltipShow = function(tt)                
+            OnTooltipShow = function(tt)
                 tt:AddLine("|cffffff00" .. "Left Click|r to toggle the Artpad window")
                 tt:AddLine("|cffffff00" .. "Right Click|r to toggle between raid and guild mode")
             end,
@@ -91,7 +91,7 @@ function ArtPad:Player_Login()
     -- [[ Version checking ]]
     self:RegisterComm("ArtPad_Version", ArtPad.Version_Msg)
     self:SendCommMessage("ArtPad_Version",tostring(ArtPad.version),ArtPad_Settings["Mode"])
-    self:RegisterComm(ArtPad.persist_prefix, ArtPad.Persist_Channel_Msg)    
+    self:RegisterComm(ArtPad.persist_prefix, ArtPad.Persist_Channel_Msg)
 end;
 
 function ArtPad:Player_Entering_World()
@@ -143,7 +143,7 @@ end
 function ArtPad:GenerateAvailablityTable()
 	local available_table = {}
 	local startindex = 1;
-	for i = 1 , #self.mainLines, 1 do 
+	for i = 1 , #self.mainLines, 1 do
 	   if not self.mainLines[i] then
 	      if startindex ~= i then
 	         table.insert(available_table, {startindex, i-1})
@@ -168,7 +168,7 @@ function ArtPad:GenerateRequestTable(aval_table)
 		start_rindex = range[1];
 		for i=range[1] , math.min(range[2],#self.mainLines) , 1  do
 			if self.mainLines[i] then
-				if start_rindex ~= i then					
+				if start_rindex ~= i then
 					if r_count + ((i-1) - start_rindex) > REQUEST_MAX then
 						table.insert(request_table, {start_rindex, start_rindex + (REQUEST_MAX - r_count)})
 						--we can return early as we have hit the max request size
@@ -201,7 +201,7 @@ local TRANSFER_TIMEOUT = 0;
 *Broadcasts*
 l() - Request to be sent the ranges of lines available
 
-*Whispers* 
+*Whispers*
 Note - These are always serialized with aceserialize then compressed/encoded with libcompress)
 
 data.availablity = { {1,100} , {150 , 200} } -- table of ranges of available lines
@@ -213,7 +213,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 	local self = ArtPad;
 	--printd(prefix,message,disType,sender)
 
-	--broadcasts	
+	--broadcasts
 	if prefix == self.persist_prefix and sender ~= UnitName("player") and disType == ArtPad_Settings["Mode"] then
 		--request line table
 		local linecount_request = string.match(message, "l%(%)")
@@ -222,7 +222,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 			printd("Sending availability table to "..sender)
 			self:SendCommMessage(self.persist_prefix,self:EncodeData(table),"WHISPER",sender,"ALERT");
 			return;
-		end		
+		end
 	end
 	--whispers
 	if prefix == self.persist_prefix and sender ~= UnitName("player") and disType == "WHISPER" then
@@ -244,7 +244,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 		    		self:RegisterComm(ArtPad.main_prefix, ArtPad.Chat_Msg_Addon)
 		    		--start the timer to get new lines regularly
 		    		C_Timer.After(2, ArtPad.GetMissingLines)
-		    		printd("Got linecount from "..sender)	
+		    		printd("Got linecount from "..sender)
 				end
 				--check if they have any lines we need and request them
 				local request_table = self:GenerateRequestTable(data.availability)
@@ -263,15 +263,15 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 			elseif data.sending then
 			--someone is sending us some lines
 				local progress = data.sending
-				printd(sender.." is sending us lines, progress %"..tostring(progress))		
+				printd(sender.." is sending us lines, progress %"..tostring(progress))
 				if progress ~= 100 then
 					--reset the timeout clock
 					TRANSFER_TIMEOUT = 0;
 				else
 					--transfer complete
 					self.receivingCanvas = false;
-				end				
-			--request for lines			
+				end
+			--request for lines
 			elseif data.request then
 				--grab the lines we need
 				local lines = {}
@@ -295,7 +295,7 @@ function ArtPad.Persist_Channel_Msg(prefix, message, disType, sender)
 					if x then
 						if not self.mainFrame:IsShown() and artpadLauncher then
 							artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
-						end					
+						end
 						self:DrawLine(x,y,a,b,{r=brushR,g=brushG,b=brushB,a=brushA},i);
 						self.missingLineCount = self.missingLineCount - 1;
 					end;
@@ -344,15 +344,15 @@ function ArtPad.GetMissingLines()
 end
 
 function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
-	local self = ArtPad;	
+	local self = ArtPad;
 	--broadcasts
 	if prefix == self.main_prefix and sender ~= UnitName("player") and disType == ArtPad_Settings["Mode"] then
-		--draw a line				
+		--draw a line
 		local x,y,a,b,brushR,brushG,brushB,brushA = string.match(message, "d%((%d+),(%d+),(%d+),(%d+),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*),(%d+%.?%d*)%)");
 		if x then
 			if not self.mainFrame:IsShown() and artpadLauncher then
 				artpadLauncher.icon = 'Interface\\AddOns\\Artpad\\iconact';
-			end					
+			end
 			self:DrawLine(x,y,a,b,{r=brushR,g=brushG,b=brushB,a=brushA});
 			return;
 		end;
@@ -383,7 +383,7 @@ function ArtPad.Chat_Msg_Addon(prefix, message, disType, sender)
 			self:ClearCanvas();
 			self:Message(sender .. " just cleared the canvas")
 			return;
-		end;		
+		end;
 	end;
 end;
 
@@ -396,13 +396,13 @@ function ArtPad.SendMsg_Callback(arg,sent,total)
 end
 
 function ArtPad:DecodeData(data)
-	local decoded = self.LibCompressEncode:Decode(data)		
+	local decoded = self.LibCompressEncode:Decode(data)
 	--Decompress the decoded data
 	local decompressed, message = self.LibCompress:DecompressHuffman(decoded)
 	if(not decompressed) then
 		printd("ArtPad: error decompressing: " .. message)
 		return nil
-	end		
+	end
 	-- Deserialize the decompressed data
 	local success, final = self:Deserialize(decompressed)
 	if (not success) then
@@ -428,7 +428,7 @@ ArtPad.events = {
 };
 -- [[ Event Management ]]
 
-function ArtPad:SetUpEvents()	
+function ArtPad:SetUpEvents()
 	self.eventListener.pad = self;
 	self.eventListener:SetScript("OnEvent", self.OnEvent);
 	self:RegisterEvents(self.events);
@@ -473,7 +473,7 @@ ArtPad.buttons = {
 			ColorPickerFrame:SetColorRGB( self.brushColor.r, self.brushColor.g, self.brushColor.b);
 			ColorPickerFrame.hasOpacity, ColorPickerFrame.opacity = (self.brushColor.a ~= nil), self.brushColor.a;
 			ColorPickerFrame.previousValues = {self.brushColor.r, self.brushColor.g, self.brushColor.b, self.brushColor.a};
-			ColorPickerFrame.func, ColorPickerFrame.opacityFunc, ColorPickerFrame.cancelFunc = 
+			ColorPickerFrame.func, ColorPickerFrame.opacityFunc, ColorPickerFrame.cancelFunc =
 			self.ColorPicker_Callback, self.ColorPicker_Callback, self.ColorPicker_Callback;
 			ColorPickerFrame:Hide(); -- Need to run the OnShow handler.
 			ColorPickerFrame:SetFrameStrata(self.mainFrame:GetFrameStrata())
@@ -485,14 +485,14 @@ ArtPad.buttons = {
 			if self.mainFrame:GetFrameStrata() == "BACKGROUND" then
 				self.mainFrame:SetFrameStrata("FULLSCREEN");
 				self.controlsFrame:SetFrameStrata("TOOLTIP")
-				self.canvasBackground:SetTexture(0,0,0,1);
+				self.canvasBackground:SetColorTexture(0,0,0,1);
 			else
 				self.mainFrame:SetFrameStrata("BACKGROUND");
 				self.controlsFrame:SetFrameStrata("BACKGROUND")
-				self.canvasBackground:SetTexture(0,0,0,0.5);
+				self.canvasBackground:SetColorTexture(0,0,0,0.5);
 			end
 		end;
-	["Center"] = 
+	["Center"] =
 		function (frame, button, down)
 			local self = frame.pad;
 			self.mainFrame:ClearAllPoints();
@@ -509,7 +509,7 @@ ArtPad.shortcuts = {
 -- [[ Minimap Event]]
 function ArtPad.MiniMapClick(clickedframe, button)
 	if not InCombatLockdown() then
-		if button ~= "RightButton" then 
+		if button ~= "RightButton" then
 			if ArtPad.mainFrame:IsShown() then
 				ArtPad.mainFrame:Hide();
 			else
@@ -576,7 +576,7 @@ function ArtPad.OnMouseUp(frame, button)
 	self.state = "SLEEP";
 end;
 
-function ArtPad.OnMouseWheel(frame, delta)	
+function ArtPad.OnMouseWheel(frame, delta)
 	local self = frame.pad; -- Static Method
 	--stop dragging, can cause problems otherwise
 	self.mainFrame:StopMovingOrSizing();
@@ -604,7 +604,7 @@ end;
 -- [[ Override Handling ]]
 function ArtPad.OnShow(frame)
 	if  not InCombatLockdown() then
-		
+
 		local self = frame.pad; -- Static Method
 		if not ArtPad_Settings["OneTimeMessage"] then
 			self:Message("New in ArtPad 8.6 : Try using the mousewheel!")
@@ -730,12 +730,12 @@ ArtPad.slashCommands = {
 			local encoded = self:EncodeData({canvas=lines})
 			local decoded = self:DecodeData(encoded)
 		end;
-	["dumpvar"] = 
+	["dumpvar"] =
 		function(self)
 			print("Receiving canvas : " ..tostring(self.receivingCanvas))
 			print("Sending : "..tostring(self.sendingCanvas))
 		end;
-	["guild"] = 
+	["guild"] =
 		function (self)
 			ArtPad_Settings["Mode"] = "GUILD";
 			self:Message("AP now in Guild mode");
@@ -835,28 +835,28 @@ function ArtPad:SetupMainFrame()
 	frameM:Hide();
 
 	self.canvasBackground = frameM:CreateTexture(nil, "BACKGROUND");
-	self.canvasBackground:SetTexture(0,0,0,0.5);
+	self.canvasBackground:SetColorTexture(0,0,0,0.5);
 	self.canvasBackground:SetAllPoints(frameM);
 	-- Border textures
 	local t_border=frameM:CreateTexture(nil,"HIGH")
-	t_border:SetTexture(1,1,1,0.7)
+	t_border:SetColorTexture(1,1,1,0.7)
 	t_border:SetPoint("TOPLEFT",0,0)
 	t_border:SetPoint("TOPRIGHT",0,-5)
 
 	local b_border=frameM:CreateTexture(nil,"HIGH")
-	b_border:SetTexture(1,1,1,0.7)
+	b_border:SetColorTexture(1,1,1,0.7)
 	b_border:SetPoint("BOTTOMLEFT",0,0)
 	b_border:SetPoint("BOTTOMRIGHT",0,self.canvasSize.Y+5)
 
 	local l_border=frameM:CreateTexture(nil,"HIGH")
-	l_border:SetTexture(1,1,1,0.7)
+	l_border:SetColorTexture(1,1,1,0.7)
 	l_border:SetPoint("TOPLEFT",0,0)
 	l_border:SetPoint("BOTTOMLEFT",5,0)
 
 	local r_border=frameM:CreateTexture(nil,"HIGH")
-	r_border:SetTexture(1,1,1,0.7)
+	r_border:SetColorTexture(1,1,1,0.7)
 	r_border:SetPoint("TOPRIGHT",0,0)
-	r_border:SetPoint("BOTTOMRIGHT",0,5)	
+	r_border:SetPoint("BOTTOMRIGHT",0,5)
 
 	--[[ Controls frame ]]
 	self.controlsFrame = CreateFrame("FRAME", nil , UIParent)
@@ -865,7 +865,7 @@ function ArtPad:SetupMainFrame()
 	self.controlsFrame:Hide()
 	--controls texture
 	local controls_tx = self.controlsFrame:CreateTexture(nil, "BACKGROUND");
-	controls_tx:SetTexture(0,0,0,0);
+	controls_tx:SetColorTexture(0,0,0,0);
 	controls_tx:SetAllPoints(self.controlsFrame);
 	--other controls setup
 	self:CreateControls()
@@ -877,7 +877,7 @@ function ArtPad:SetupMainFrame()
 	self.versionText:SetFont("Fonts\\FRIZQT__.TTF",16);
 	self.versionText:SetJustifyH("LEFT")
 	self.versionText:SetText("ArtPad v."..self.version);
-	
+
 	local frameT = CreateFrame("EditBox", nil, self.controlsFrame);
 	self.textInput = frameT;
 	self.textInput.pad = self;
@@ -900,7 +900,7 @@ function ArtPad:SetupMainFrame()
 
 	self.mainFrame:EnableMouse(true);
 	self.mainFrame:SetScript("OnMouseDown", self.OnMouseDown);
-	self.mainFrame:SetScript("OnMouseUp", self.OnMouseUp);	
+	self.mainFrame:SetScript("OnMouseUp", self.OnMouseUp);
 	self.mainFrame:SetScript("OnMouseWheel", self.OnMouseWheel);
 
 	self.mainFrame:SetScript("OnShow", self.OnShow);
@@ -920,7 +920,7 @@ function ArtPad:CreateControls()
 
 	local cpicker_button = self:CreateButton("cpicker_button", self.buttons["ColorPicker"], "Color Picker")
 	local cpicker_sample_tx = cpicker_button:CreateTexture(nil, "OVERLAY");
-	cpicker_sample_tx:SetTexture(1,1,1,1);
+	cpicker_sample_tx:SetColorTexture(1,1,1,1);
 	cpicker_sample_tx:SetHeight(10)
 	cpicker_sample_tx:SetPoint("BOTTOM")
 	cpicker_sample_tx:SetPoint("LEFT")
@@ -942,31 +942,31 @@ function ArtPad:CreateButton(name,func,text,wpadding,hpadding)
 	--center_button
 	--buttonframe
 	local button = CreateFrame("Button", name, self.controlsFrame)
-	
+
 	button:SetText(text)
 	button:SetNormalFontObject("GameFontNormalLarge")
 	button:SetScript("OnClick", func);
 	button.pad = self;
 	button:SetFrameStrata("FULLSCREEN")
 	button:SetWidth(button:GetTextWidth() + wpadding)
-	button:SetHeight(button:GetTextHeight() + hpadding)	
-	
+	button:SetHeight(button:GetTextHeight() + hpadding)
+
 	--textures
 	local button_ntex = button:CreateTexture()
-	button_ntex:SetTexture(0, 0, 0, 0.6875)
+	button_ntex:SetColorTexture(0, 0, 0, 0.6875)
 	button_ntex:SetTexCoord(0, 0.625, 0, 0.6875)
-	button_ntex:SetAllPoints()	
+	button_ntex:SetAllPoints()
 	button:SetNormalTexture(button_ntex)
 
-	
+
 	local button_htext = button:CreateTexture()
-	button_htext:SetTexture(0.15, 0.48, 0, 0.5)
+	button_htext:SetColorTexture(0.15, 0.48, 0, 0.5)
 	button_htext:SetTexCoord(0, 0.625, 0, 0.6875)
 	button_htext:SetAllPoints()
 	button:SetHighlightTexture(button_htext)
-	
+
 	local button_ptext = button:CreateTexture()
-	button_ptext:SetTexture(0, 0, 0, 0.8)
+	button_ptext:SetColorTexture(0, 0, 0, 0.8)
 	button_ptext:SetTexCoord(0, 0.625, 0, 0.6875)
 	button_ptext:SetAllPoints()
 	button:SetPushedTexture(button_ptext)
@@ -1051,7 +1051,7 @@ ArtPad.junkTexts = {};
 function ArtPad:SendLine(x, y, oldX, oldY, brush)
 	if oldY and oldY then
 		local msg = "d("..x..","..y..","..oldX..","..oldY..","..brush.r..","..brush.g..","..brush.b..","..brush.a..")"
-		ArtPad:SendCommMessage(ArtPad.main_prefix, msg, ArtPad_Settings["Mode"], nil, "NORMAL")			
+		ArtPad:SendCommMessage(ArtPad.main_prefix, msg, ArtPad_Settings["Mode"], nil, "NORMAL")
 	end;
 end;
 
@@ -1064,7 +1064,7 @@ function ArtPad:SendClear(x, y, oldX, oldY)
 	else
 		msg = "c()";
 	end;
-	ArtPad:SendCommMessage(ArtPad.main_prefix, msg, ArtPad_Settings["Mode"], nil, "ALERT")	
+	ArtPad:SendCommMessage(ArtPad.main_prefix, msg, ArtPad_Settings["Mode"], nil, "ALERT")
 end;
 
 function ArtPad:SendColor(r, g, b, a)
@@ -1085,7 +1085,7 @@ end;
 
 function ArtPad:ClearLine(x, y, oldX, oldY)
 	for i = #self.mainLines, 1, -1 do
-		if self.mainLines[i]  then 
+		if self.mainLines[i]  then
 			local px = self.mainLines[i]["lax"];
 			local py = self.mainLines[i]["lay"];
 			local qx = self.mainLines[i]["lbx"];
@@ -1162,7 +1162,7 @@ function ArtPad:SetColor(r, g, b, a)
 	self.brushColor.g = g;
 	self.brushColor.b = b;
 	self.brushColor.a = a;
-	self.brushColorSample:SetTexture(r,g,b,a);
+	self.brushColorSample:SetColorTexture(r,g,b,a);
 end;
 
 function ArtPad:SetTexColor(tex, brush)
@@ -1286,7 +1286,7 @@ function ArtPad.GetCoordsForTransform(A, B, C, D, E, F)
 	return ULx, ULy, LLx, LLy, URx, URy, LRx, LRy;
 end;
 
-    
+
 --[[ Slash Commands ]]
 SlashCmdList["ARTPAD"] = ArtPad.OnSlashCommand;
 SLASH_ARTPAD1 = "/artpad";
@@ -1303,4 +1303,3 @@ BINDING_NAME_ARTPAD_TOGGLE = "Toggle Art Window";
 -- [[ Listen for events ]]
 
 ArtPad:SetUpEvents();
-
