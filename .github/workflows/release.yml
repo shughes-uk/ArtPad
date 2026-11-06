@@ -1,9 +1,12 @@
 name: Release
 
-# Push a tag (e.g. `git tag v10.0 && git push origin v10.0`) to build the addon zip and
-# attach it to a GitHub release. To also upload to CurseForge / Wago, add
-# `## X-Curse-Project-ID:` / `## X-Wago-ID:` to ArtPad.toc and the CF_API_KEY /
-# WAGO_API_TOKEN repository secrets.
+# Push a tag (e.g. `git tag v10.0_release && git push origin v10.0_release`) to build the
+# addon zip and attach it to a GitHub release.
+#
+# This workflow only ever makes GitHub releases. CurseForge builds come from the
+# CurseForge project's own repository webhook (pushes become alphas, tags become
+# releases), so uploading from here too would create duplicate files. That's why no
+# CurseForge / Wago / WoWInterface tokens are passed, and the project ids are unset.
 
 on:
   push:
@@ -16,8 +19,6 @@ jobs:
     permissions:
       contents: write
     env:
-      CF_API_KEY: ${{ secrets.CF_API_KEY }}
-      WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
       GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
@@ -30,5 +31,8 @@ jobs:
         run: |
           pip install lupa
           python tests/run_tests.py
-      - name: Package and upload
+      - name: Package for GitHub release
         uses: BigWigsMods/packager@v2
+        with:
+          # -p 0 / -w 0 / -a 0: never upload to CurseForge, WoWInterface or Wago
+          args: -p 0 -w 0 -a 0
