@@ -1,15 +1,14 @@
 <Bindings>
 	<Binding name="ARTPAD_SHOW" header="ARTPAD">
-		ArtPad.mainFrame:Show();
+		if ArtPad and ArtPad.mainFrame then ArtPad.mainFrame:Show() end
 	</Binding>
 	<Binding name="ARTPAD_HIDE">
-		ArtPad.mainFrame:Hide();
+		if ArtPad and ArtPad.mainFrame then ArtPad.mainFrame:Hide() end
 	</Binding>
 	<Binding name="ARTPAD_TOGGLE">
-		if ArtPad.mainFrame:IsShown() then
-			ArtPad.mainFrame:Hide();
-		else
-			ArtPad.mainFrame:Show();
-		end;
+		if ArtPad then ArtPad:Toggle() end
+	</Binding>
+	<Binding name="ARTPAD_UNDO">
+		if ArtPad and ArtPad.Undo then ArtPad:Undo() end
 	</Binding>
 </Bindings>

@@ -1,12 +1,15 @@
 package-as: ArtPad
 enable-nolib-creation: no
 
-externals:
- Libs/AceAddon-3.0: https://repos.wowace.com/wow/ace3/trunk/AceAddon-3.0
- Libs/AceComm-3.0: https://repos.wowace.com/wow/ace3/trunk/AceComm-3.0
- Libs/AceSerializer-3.0: https://repos.wowace.com/wow/ace3/trunk/AceSerializer-3.0
- Libs/CallbackHandler-1.0: https://repos.wowace.com/wow/callbackhandler/trunk/CallbackHandler-1.0
- Libs/LibCompress: https://repos.wowace.com/wow/libcompress/trunk
- Libs/LibDataBroker-1.1: git://github.com/tekkub/libdatabroker-1-1.git
- Libs/LibDBIcon-1.0: https://repos.wowace.com/wow/libdbicon-1-0/trunk/LibDBIcon-1.0
- Libs/LibStub: https://repos.wowace.com/wow/libstub/trunk
+# Libraries are vendored in Libs/ so the repo can be linked straight into
+# Interface\AddOns for development. Refresh them from:
+#   Ace3 (LibStub, CallbackHandler, AceAddon, AceComm, AceSerializer): https://github.com/WoWUIDev/Ace3
+#   LibDataBroker-1.1: https://github.com/tekkub/libdatabroker-1-1
+#   LibDBIcon-1.0: https://repos.wowace.com/wow/libdbicon-1-0/trunk
+#   LibDeflate: https://github.com/SafeteeWoW/LibDeflate
+
+ignore:
+  - pkgmeta.yaml
+  - tests
+  - .github
+  - .luacheckrc
