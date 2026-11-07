@@ -1,27 +1,23 @@
 ArtPad - a shared canvas for your guild or group.
 
 Usage:
-  /ap            toggle the canvas (also: minimap button, addon compartment, key binding)
-  Left drag      draw            Right drag    erase (size follows the brush)
-  Drag the bar on top of the canvas to move it (right-click it to fit)
-  Mouse wheel    zoom
-  Ctrl-Z         undo your last stroke or text
-  /ap options    settings (also Options > AddOns > ArtPad, or middle-click the minimap button)
+  /ap            open or close ArtPad (also: minimap button, addon compartment, key binding)
+  Left drag      draw (or erase with the eraser tool; size follows the brush)
+  Right drag     pan (middle drag works too)       Mouse wheel   zoom
+  Ctrl-Z         undo your last stroke, text or marker
+  [ ]            brush size (while the mouse is over the canvas)
+  /ap options    settings (also Options > AddOns > ArtPad)
   /ap guild      share with your guild (default)
   /ap raid       share with your party / raid / instance group
   /ap resync     re-download the canvas from others
   /ap loopback   test sync on your own: your drawing round-trips through the server
-  /ap resetui    put the toolbar and dock back (drag their grips to move them)
+  /ap resetui    put the window back to its default size and spot
+
+Drag the title bar to move the window and the bottom-right corner to resize it. The pill in
+the title bar shows who you're sharing with; click it to switch or to hide your name.
 
 People who log in, join your group or switch mode receive the existing canvas from
 whoever has the most complete copy.
-
-The dock on the left has the tools (pen, line, arrow, box, circle, text), raid marker and
-role stamps, and colours. Map (toolbar) shows the map of where you are under the canvas
-for everyone. Fit scales the canvas to your screen.
-
-The bar under the toolbar shows who you're sharing with (click it to switch), who is
-drawing right now, and progress while a canvas is loading.
 
 Development:
   Link the repo folder into the game (no admin needed), then /reload after editing:

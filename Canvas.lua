@@ -28,10 +28,26 @@ local linePool, dotPool, textPool, stampPool = {}, {}, {}, {}
 
 local DOT_MIN_WIDTH = 3 -- below this, joints are too small to need round caps
 local CORNER_COS = math.cos(math.rad(25)) -- straight strokes get a joint dot past this turn
-local CURVE_STEP = 10 -- canvas px per rendered piece of a smoothed segment
+local CURVE_TOL = 1 -- max distance (canvas px) between a rendered curve and the true one
+local MIN_PIECE = 4 -- canvas px; no point splitting a segment finer than this
 local MAX_PIECES = 8
+-- Measured (/ap bench): past ~16384 quads (65536 vertices / 4) the client stops drawing them
+-- *all*. The pool is shared - splitting over frames doesn't help, and plain textures count the
+-- same as lines - so this counts every quad the canvas uses (lines, dots, markers, text
+-- glyphs) and leaves headroom for the window, map tiles and other UI. Past LINE_BUDGET curves
+-- are drawn as straight segments (one line each); LINE_CAP is a hard stop for new lines.
+local LINE_BUDGET, LINE_CAP = 11000, 14500
+ArtPad.LINE_BUDGET, ArtPad.LINE_CAP = LINE_BUDGET, LINE_CAP
+ArtPad.lineBudget, ArtPad.lineCap = LINE_BUDGET, LINE_CAP -- /ap bench nolimit lifts these
+ArtPad.linesInUse = 0
+ArtPad.quadsInUse = 0
 
-ArtPad.MAX_WIDTH = 64
+local function Use(region, quads)
+	region.quads = quads
+	ArtPad.quadsInUse = ArtPad.quadsInUse + quads
+end
+
+ArtPad.MAX_WIDTH = 256
 
 --[[ Stamps ]]
 
@@ -58,7 +74,7 @@ do
 end
 
 function ArtPad:GetStampSize()
-	return math_max(40, ArtPad_Settings.BrushSize * 8)
+	return math_floor(math_max(24, ArtPad_Settings.BrushSize * 6) * self:CanvasPerPixel() + 0.5)
 end
 
 --[[ Geometry ]]
@@ -101,16 +117,84 @@ end
 ArtPad.PointSegDist = PointSegDist
 ArtPad.SegSegDist = SegSegDist
 
+--[[ Draw layers ]]
+
+-- The client draws each frame's regions in batches with 16-bit vertex indices; a frame with
+-- more than ~16k quads silently stops rendering *everything* on it. A long scribble easily
+-- gets there (smooth segments are several lines each), so drawings are spread over child
+-- frames of at most LAYER_SIZE regions. Pooled regions stay in the layer they were made in.
+local LAYER_SIZE = 2000
+ArtPad.LAYER_SIZE = LAYER_SIZE
+
+function ArtPad:DrawLayer()
+	local layers = self.drawLayers
+	if not layers then
+		layers = {}
+		self.drawLayers = layers
+	end
+	local layer = layers[#layers]
+	if not layer or layer.regions >= LAYER_SIZE then
+		layer = CreateFrame("Frame", nil, self.mainFrame)
+		layer:SetAllPoints(self.mainFrame)
+		layer:SetFrameLevel(self.mainFrame:GetFrameLevel() + #layers + 1)
+		layer.regions = 0
+		tinsert(layers, layer)
+	end
+	layer.regions = layer.regions + 1
+	return layer
+end
+
+-- /ap stats: what the canvas holds versus what is actually on screen, for tracking down
+-- drawings that "vanish".
+function ArtPad:PrintStats()
+	local strokes, points, segs, shownLines, hiddenLines, other = 0, 0, 0, 0, 0, 0
+	for _, item in ipairs(self.items) do
+		if item.kind == "S" then
+			strokes = strokes + 1
+			points = points + (item.n or 0)
+			for _, pieces in pairs(item.segs) do
+				segs = segs + 1
+				for _, line in ipairs(pieces) do
+					if line:IsVisible() then shownLines = shownLines + 1 else hiddenLines = hiddenLines + 1 end
+				end
+			end
+		else
+			other = other + 1
+		end
+	end
+	self:Message(("items %d (strokes %d, other %d), points %d, segments %d, lines shown %d / hidden %d, in use %d, quads %d%s")
+		:format(#self.items, strokes, other, points, segs, shownLines, hiddenLines, self.linesInUse, self.quadsInUse,
+			self.coarse and " (simplified)" or ""))
+	local layers = {}
+	for i, layer in ipairs(self.drawLayers or {}) do
+		layers[i] = ("%d:%d%s a%.2f"):format(i, layer.regions, layer:IsVisible() and "" or " HIDDEN", layer:GetEffectiveAlpha())
+	end
+	self:Message("layers " .. (#layers > 0 and table.concat(layers, ", ") or "none"))
+	local f, v = self.mainFrame, self.view or {}
+	self:Message(("canvas shown %s, alpha %.2f, scale %.3f, offset %s,%s; queue %d; loopback %s; sync %s; me %s")
+		:format(tostring(f:IsVisible()), f:GetEffectiveAlpha(), f:GetScale(), tostring(v[2]), tostring(v[3]),
+			#(self.outQueue or {}), tostring(self.loopback and true or false), tostring(self.syncPhase), tostring(self.playerName)))
+end
+
 --[[ Region pools ]]
 
 function ArtPad:AcquireLine()
+	if self.quadsInUse >= self.lineCap then
+		if not self.warnedFull then
+			self.warnedFull = true
+			if self.Notify then self:Notify("The canvas is full. Clear or erase something to keep drawing.", "warn") end
+		end
+		return nil
+	end
+	self.linesInUse = self.linesInUse + 1
 	local line = tremove(linePool)
 	if not line then
-		line = self.mainFrame:CreateLine(nil, "ARTWORK")
+		line = self:DrawLayer():CreateLine(nil, "ARTWORK")
 		-- Unsnapped lines look smoother when zoomed in (where the client supports it).
 		if line.SetSnapToPixelGrid then line:SetSnapToPixelGrid(false) end
 		if line.SetTexelSnappingBias then line:SetTexelSnappingBias(0) end
 	end
+	Use(line, 1)
 	line:Show()
 	return line
 end
@@ -118,28 +202,36 @@ end
 function ArtPad:AcquireDot()
 	local dot = tremove(dotPool)
 	if not dot then
-		dot = self.mainFrame:CreateTexture(nil, "ARTWORK", nil, 1)
+		dot = self:DrawLayer():CreateTexture(nil, "ARTWORK", nil, 1)
 		dot:SetTexture(self.MEDIA .. "dot")
 	end
+	Use(dot, 1)
 	dot:Show()
 	return dot
 end
 
 function ArtPad:AcquireFontString()
-	local fs = tremove(textPool) or self.mainFrame:CreateFontString(nil, "OVERLAY")
+	local fs = tremove(textPool) or self:DrawLayer():CreateFontString(nil, "OVERLAY")
 	fs:Show()
 	return fs
 end
 
 local function Release(pool, region)
+	ArtPad.quadsInUse = ArtPad.quadsInUse - (region.quads or 0)
+	region.quads = nil
 	region:Hide()
 	region:ClearAllPoints()
 	tinsert(pool, region)
 end
 
+local function ReleaseLine(line)
+	ArtPad.linesInUse = ArtPad.linesInUse - 1
+	Release(linePool, line)
+end
+
 local function ReleasePieces(pieces)
 	for k = #pieces, 1, -1 do
-		Release(linePool, pieces[k])
+		ReleaseLine(pieces[k])
 		pieces[k] = nil
 	end
 end
@@ -184,13 +276,20 @@ local function SegmentPath(s, i)
 	local dx, dy = x2 - x1, y2 - y1
 	local len = math_sqrt(dx * dx + dy * dy)
 	local pieces = 1
-	if s.smooth and len > CURVE_STEP then
-		pieces = math_min(MAX_PIECES, math_ceil(len / CURVE_STEP))
-	end
-	if pieces > 1 then
-		local x0, y0, x3, y3 = x1, y1, x2, y2
+	local x0, y0, x3, y3 = x1, y1, x2, y2
+	if s.smooth and not ArtPad.coarse and len > MIN_PIECE then
 		if SegAlive(s, i - 1) then x0, y0 = s.px[i - 1], s.py[i - 1] end
 		if SegAlive(s, i + 1) then x3, y3 = s.px[i + 2], s.py[i + 2] end
+		-- How far the curve bows away from the straight chord: Hermite form with Catmull-Rom
+		-- tangents m1, m2; the bow is at most 4/27 (|m1 - d| + |m2 - d|), and shrinks with the
+		-- square of the number of pieces.
+		local ex1, ey1 = (x2 - x0) / 2 - dx, (y2 - y0) / 2 - dy
+		local ex2, ey2 = (x3 - x1) / 2 - dx, (y3 - y1) / 2 - dy
+		local bow = 4 / 27 * (math_sqrt(ex1 * ex1 + ey1 * ey1) + math_sqrt(ex2 * ex2 + ey2 * ey2))
+		pieces = math_ceil(math_sqrt(bow / CURVE_TOL))
+		pieces = math_max(1, math_min(MAX_PIECES, pieces, math_floor(len / MIN_PIECE)))
+	end
+	if pieces > 1 then
 		for k = 1, pieces - 1 do
 			local t = k / pieces
 			local t2, t3 = t * t, t * t * t
@@ -223,6 +322,10 @@ function ArtPad:RenderSegment(s, i)
 		local line = pieces[k]
 		if not line then
 			line = self:AcquireLine()
+			if not line then
+				count = k - 1
+				break
+			end
 			pieces[k] = line
 		end
 		local ax, ay, bx, by = curveX[k], curveY[k], curveX[k + 1], curveY[k + 1]
@@ -237,7 +340,7 @@ function ArtPad:RenderSegment(s, i)
 		line:SetEndPoint("BOTTOMLEFT", self.mainFrame, bx + dx, by + dy)
 	end
 	for k = #pieces, count + 1, -1 do
-		Release(linePool, pieces[k])
+		ReleaseLine(pieces[k])
 		pieces[k] = nil
 	end
 end
@@ -299,6 +402,19 @@ function ArtPad:SetStrokePoint(s, i, x, y)
 	self:UpdateDot(s, i)
 	self:UpdateDot(s, i + 1)
 	self:Changed()
+	self:CheckLineBudget()
+end
+
+-- Past LINE_BUDGET lines, redraw every curve as straight segments so the canvas stays under
+-- the client's limit. Goes back to curves once the canvas is cleared.
+function ArtPad:CheckLineBudget()
+	if self.coarse or self.quadsInUse <= self.lineBudget then return end
+	self.coarse = true
+	for _, item in ipairs(self.items) do
+		if item.kind == "S" and item.smooth then
+			for k = 1, item.n - 1 do self:RenderSegment(item, k) end
+		end
+	end
 end
 
 -- segments: array of segment indices. Erasing every segment removes the stroke.
@@ -322,17 +438,19 @@ end
 
 --[[ Texts ]]
 
-function ArtPad:AddText(id, author, x, y, text, color)
+function ArtPad:AddText(id, author, x, y, text, color, size)
 	if self.itemsById[id] then return end
+	size = math_max(6, math_min(400, math_floor(tonumber(size) or 14)))
 	local fs = self:AcquireFontString()
-	fs:SetFont(self.FONT, 14, "")
+	fs:SetFont(self.FONT, size, "")
 	fs:SetJustifyH("LEFT")
 	fs:SetPoint("BOTTOMLEFT", self.mainFrame, "BOTTOMLEFT", x, y)
 	fs:SetTextColor(color.r, color.g, color.b, color.a)
 	fs:SetText(text)
+	Use(fs, #text) -- about one quad per glyph
 	local t = {
 		id = id, kind = "T", author = author,
-		x = x, y = y, text = text, r = color.r, g = color.g, b = color.b, a = color.a,
+		x = x, y = y, text = text, r = color.r, g = color.g, b = color.b, a = color.a, size = size,
 		fs = fs, x2 = x + fs:GetStringWidth(), y2 = y + fs:GetStringHeight(),
 	}
 	self.itemsById[id] = t
@@ -347,12 +465,13 @@ function ArtPad:AddStamp(id, author, key, x, y, size)
 	local def = self.STAMPS[key]
 	if self.itemsById[id] or not def then return end
 	size = math_max(8, math_min(512, math_floor(tonumber(size) or 40)))
-	local tex = tremove(stampPool) or self.mainFrame:CreateTexture(nil, "OVERLAY")
+	local tex = tremove(stampPool) or self:DrawLayer():CreateTexture(nil, "OVERLAY")
 	tex:SetTexture(def[1])
 	tex:SetTexCoord(def[2], def[3], def[4], def[5])
 	tex:SetSize(size, size)
 	tex:ClearAllPoints()
 	tex:SetPoint("CENTER", self.mainFrame, "BOTTOMLEFT", x, y)
+	Use(tex, 1)
 	tex:Show()
 	local m = { id = id, kind = "M", author = author, key = key, x = x, y = y, size = size, tex = tex }
 	self.itemsById[id] = m
@@ -378,6 +497,31 @@ local function ReleaseItem(item)
 	end
 end
 
+ArtPad.ReleaseItem = ReleaseItem
+
+-- Re-key everything `old` drew as `new` (see LearnOwnName).
+function ArtPad:RenameAuthor(old, new)
+	if not old or old == new then return end
+	local prefix = old .. ":"
+	local function Rekey(id)
+		if type(id) == "string" and id:sub(1, #prefix) == prefix then
+			return new .. ":" .. id:sub(#prefix + 1)
+		end
+		return id
+	end
+	for _, item in ipairs(self.items) do
+		local id = Rekey(item.id)
+		if id ~= item.id then
+			self.itemsById[item.id] = nil
+			item.id, item.author = id, new
+			self.itemsById[id] = item
+		end
+	end
+	for k, id in ipairs(self.undoStack) do self.undoStack[k] = Rekey(id) end
+	if self.currentStroke then self.currentStroke.id = Rekey(self.currentStroke.id) end
+	self:Changed()
+end
+
 function ArtPad:RemoveItem(id)
 	local item = self.itemsById[id]
 	if not item then return end
@@ -400,6 +544,7 @@ function ArtPad:ClearCanvas()
 	wipe(self.items)
 	wipe(self.itemsById)
 	wipe(self.undoStack)
+	self.coarse, self.warnedFull = false, false
 	self:Changed()
 end
 
@@ -540,16 +685,16 @@ function ArtPad:SerializeCanvas()
 		elseif it.kind == "M" then
 			tinsert(out, { it.id, "M", it.author, "1,1,1,1", it.x, it.y, it.key .. ":" .. it.size })
 		else
-			tinsert(out, { it.id, "T", it.author, self.ColorString(it), it.x, it.y, it.text })
+			tinsert(out, { it.id, "T", it.author, self.ColorString(it), it.x, it.y, it.text, it.size })
 		end
 	end
-	return { v = 2, items = out, map = self.backdropMap }
+	return { v = 2, items = out, map = self.backdropMap, mapOverlays = self.backdropOverlays }
 end
 
 function ArtPad:LoadCanvas(snapshot)
 	self:ClearAll()
 	if self.SetBackdrop and tonumber(snapshot.map) then
-		self:SetBackdrop(tonumber(snapshot.map))
+		self:SetBackdrop(tonumber(snapshot.map), type(snapshot.mapOverlays) == "string" and snapshot.mapOverlays or "")
 	end
 	for _, rec in ipairs(snapshot.items) do
 		local id, kind, author, color = rec[1], rec[2], rec[3], self.ParseColor(rec[4])
@@ -578,7 +723,7 @@ function ArtPad:LoadCanvas(snapshot)
 				-- A fully erased stroke that slipped through; drop it.
 				if s.n == 0 then self:RemoveItem(id) end
 			elseif kind == "T" and tonumber(rec[5]) and tonumber(rec[6]) and type(rec[7]) == "string" then
-				self:AddText(id, author, tonumber(rec[5]), tonumber(rec[6]), rec[7], color)
+				self:AddText(id, author, tonumber(rec[5]), tonumber(rec[6]), rec[7], color, rec[8])
 			elseif kind == "M" and tonumber(rec[5]) and tonumber(rec[6]) then
 				local key, size = tostring(rec[7]):match("^(%w+):(%d+)$")
 				if key then

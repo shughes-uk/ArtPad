@@ -6,7 +6,7 @@
 	  Core.lua     addon object, settings, modes, events, slash commands, launcher
 	  Canvas.lua   drawing model (strokes/texts), rendering, hit testing, snapshots, undo
 	  Comm.lua     live drawing protocol, canvas sync for late joiners, permissions
-	  UI.lua       canvas frame, toolbar, mouse handling, name tags, colour picker
+	  UI.lua       the window, canvas view (zoom/pan/fit), mouse and keys
 	  Options.lua  settings panel
 ]]
 
@@ -35,26 +35,75 @@ local defaults = {
 	AdminOnly = false, -- only accept drawings from leaders/assists (group) or officers (guild)
 	AdminGuildRank = 1, -- guild rank index counted as officer (0 = guild master)
 	WarnClear = true, -- confirm before clearing the canvas for everyone
+	FullNames = {}, -- character GUID -> name as others see it (WoW Forever adds a surname)
 	NameTags = true, -- show who is drawing
+	ShowMyName = true, -- let others see my name on what I draw
 	HideInCombat = true,
-	Scale = 1,
-	Position = false, -- { left, bottom } in canvas-scaled units, false = centered
+	View = false, -- { scale, x, y } of the canvas in the window; false = fit
+	WindowSize = false, -- { w, h }; false = default
+	MapDim = 0.4, -- darken the map backdrop so drawings stand out
 	BrushSize = 3,
 	Color = { r = 1, g = 1, b = 1, a = 1 },
 	RecentColors = {},
-	FramePositions = {}, -- toolbar / dock positions, see MakeMovable
+	FramePositions = {}, -- window position
 	MinimapIcon = {},
 	Debug = false,
 }
 
 --[[ Helpers ]]
 
+-- Character name without realm. Character names can't contain "-", so strip from the first
+-- one too, in case a client formats senders differently from what Ambiguate expects.
 function ArtPad.ShortName(name)
-	return name and Ambiguate(name, "none")
+	if not name then return nil end
+	return (Ambiguate(name, "none"):gsub("%-.*$", ""))
+end
+
+-- Your name as other players see it: the sender name on your messages, and the author part
+-- of your item ids. Usually UnitName("player"), but WoW Forever characters have a surname
+-- that only appears in sender names ("Corgi Pembroke" vs "Corgi"), and only the full pair is
+-- unique. The real one is learned from the server echoing our own sync request back
+-- (LearnOwnName) and remembered per character. UnitName can also be a placeholder
+-- ("Unknown") while addons load, so until then it's re-read.
+function ArtPad:RefreshPlayerName()
+	if self.learnedName then return self.playerName end
+	local guid = UnitGUID and UnitGUID("player")
+	local saved = guid and type(ArtPad_Settings.FullNames) == "table" and ArtPad_Settings.FullNames[guid]
+	if type(saved) == "string" and saved ~= "" then
+		self.playerName = saved
+		return saved
+	end
+	local name = ArtPad.ShortName(UnitName("player"))
+	if name and name ~= "" and name ~= UNKNOWNOBJECT and name ~= "Unknown" then
+		self.playerName = name
+	end
+	return self.playerName
+end
+
+function ArtPad:LearnOwnName(sender)
+	local full = ArtPad.ShortName(sender)
+	if not full or full == "" then return end
+	-- Sanity check: it has to be our UnitName, possibly followed by a surname.
+	local unit = ArtPad.ShortName(UnitName("player"))
+	if unit and unit ~= "" and unit ~= "Unknown" and unit ~= UNKNOWNOBJECT
+			and full ~= unit and full:sub(1, #unit + 1) ~= unit .. " " then
+		return
+	end
+	self.learnedName = true
+	local guid = UnitGUID and UnitGUID("player")
+	if guid then
+		if type(ArtPad_Settings.FullNames) ~= "table" then ArtPad_Settings.FullNames = {} end
+		ArtPad_Settings.FullNames[guid] = full
+	end
+	if full ~= self.playerName then
+		self:Debug(("own name is %s (was %s)"):format(full, tostring(self.playerName)))
+		if self.RenameAuthor then self:RenameAuthor(self.playerName, full) end
+		self.playerName = full
+	end
 end
 
 function ArtPad:IsSelf(sender)
-	return ArtPad.ShortName(sender) == self.playerName
+	return ArtPad.ShortName(sender) == self:RefreshPlayerName()
 end
 
 function ArtPad:Debug(...)
@@ -87,7 +136,8 @@ function ArtPad:OnInitialize()
 	ArtPad_Settings.SaveVersion = self.saveVersion
 	self.DEBUG = ArtPad_Settings.Debug
 
-	self.playerName = UnitName("player")
+	self.playerName = ArtPad.ShortName(UnitName("player"))
+	self:RefreshPlayerName()
 	self.sessionTag = string.format("%x", time() % 0x100000)
 	self.idCounter = 0
 end
@@ -95,12 +145,16 @@ end
 local events = {}
 
 function ArtPad:OnEnable()
-	self:SetupUI()
-	self:SetupTools()
-	self:SetupFeedback()
+	self:RefreshPlayerName()
+	-- Messaging first: it doesn't depend on the UI, so drawing and syncing keep working even
+	-- if a piece of the UI fails to build. Each step reports its own error to chat.
 	self:SetupComm()
-	self:SetupOptions()
-	self:SetupLauncher()
+	for _, step in ipairs({ "SetupUI", "SetupTools", "SetupFeedback", "SetupOptions", "SetupLauncher" }) do
+		local ok, err = pcall(self[step], self)
+		if not ok then
+			self:Message("|cffff6060setup failed (" .. step .. "):|r " .. tostring(err))
+		end
+	end
 
 	if C_GuildInfo and C_GuildInfo.GuildRoster then
 		C_GuildInfo.GuildRoster()
@@ -126,8 +180,8 @@ function events:PLAYER_ENTERING_WORLD()
 end
 
 function events:PLAYER_REGEN_DISABLED()
-	if ArtPad_Settings.HideInCombat and self.mainFrame:IsShown() then
-		self.mainFrame:Hide()
+	if ArtPad_Settings.HideInCombat and self.window:IsShown() then
+		self.window:Hide()
 	end
 end
 
@@ -159,15 +213,6 @@ function ArtPad:SetMode(mode)
 	self:RefreshOptions()
 end
 
-function ArtPad:Toggle()
-	if not self.mainFrame then return end
-	if self.mainFrame:IsShown() then
-		self.mainFrame:Hide()
-	else
-		self.mainFrame:Show()
-	end
-end
-
 --[[ Minimap button / addon compartment ]]
 
 function ArtPad:SetLauncherActive(active)
@@ -177,7 +222,7 @@ function ArtPad:SetLauncherActive(active)
 end
 
 function ArtPad:NotifyActivity()
-	if self.mainFrame and not self.mainFrame:IsShown() then
+	if self.window and not self.window:IsShown() then
 		self:SetLauncherActive(true)
 	end
 end
@@ -236,8 +281,8 @@ local function OnOff(arg, current)
 end
 
 ArtPad.slashCommands = {
-	show = function(self) self.mainFrame:Show() end,
-	hide = function(self) self.mainFrame:Hide() end,
+	show = function(self) self.window:Show() end,
+	hide = function(self) self.window:Hide() end,
 	toggle = function(self) self:Toggle() end,
 	clear = function(self)
 		self:ClearCanvas()
@@ -253,9 +298,11 @@ ArtPad.slashCommands = {
 	map = function(self) self:ToggleMap() end,
 	resetui = function(self)
 		self:ResetAllFramePositions()
-		self:Message("toolbar and dock are back in their default spots.")
+		self:Message("window is back in its default spot.")
 	end,
 	fit = function(self) self:ResetPosition() end,
+	stats = function(self) self:PrintStats() end,
+	bench = function(self, arg) self:BenchCommand(arg) end, -- hidden: Debug.lua
 	size = function(self, arg)
 		local n = tonumber(arg)
 		if n then self:SetBrushSize(n) end
@@ -319,7 +366,7 @@ function ArtPad.OnSlashCommand(msg)
 		self:Message("/ap undo  (or Ctrl-Z)   /ap size <n>  - brush size")
 		self:Message("/ap resync  - re-download the canvas   /ap clear  - clear locally")
 		self:Message("/ap map  - show/hide the map of where you are   /ap fit  - fit canvas to screen")
-		self:Message("/ap resetui  - put the toolbar and dock back (drag their grips to move them)")
+		self:Message("/ap resetui  - put the window back to its default size and spot")
 		self:Message("/ap adminonly [on|off]   /ap adminrank <n>")
 		self:Message("/ap names | warnclear | minimap [on|off]")
 		self:Message("/ap loopback  - test sync solo: round-trip your drawing through the server")

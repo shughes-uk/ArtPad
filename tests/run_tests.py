@@ -55,7 +55,7 @@ function CANVAS_SIGNATURE()
 		recs[#recs + 1] = table.concat(parts, "|")
 	end
 	table.sort(recs)
-	recs[#recs + 1] = "map=" .. tostring(ArtPad.backdropMap)
+	recs[#recs + 1] = "map=" .. tostring(ArtPad.backdropMap) .. " " .. tostring(ArtPad.backdropOverlays)
 	return table.concat(recs, "\n")
 end
 
@@ -86,33 +86,35 @@ function TOAST_TEXT()
 end
 function TOAST_ACTION()
 	local t = ArtPad.toast
-	return t:IsShown() and t.action:IsShown() and t.action._text or nil
+	return t:IsShown() and t.action:IsShown() and t.action.label._text or nil
 end
 function CLICK(button) button._scripts.OnClick(button, "LeftButton") end
 
 function PEN_DOWN(x, y, button)
-	local f = ArtPad.mainFrame
+	local f = ArtPad.viewport
 	CURSOR_X, CURSOR_Y = x, y
 	f._scripts.OnMouseDown(f, button or "LeftButton")
 end
 function PEN_MOVE(x, y)
-	local f = ArtPad.mainFrame
+	local f = ArtPad.viewport
 	CURSOR_X, CURSOR_Y = x, y
 	f._scripts.OnUpdate(f, 0.016)
 end
 function PEN_UP(button)
-	local f = ArtPad.mainFrame
+	local f = ArtPad.viewport
 	f._scripts.OnMouseUp(f, button or "LeftButton")
 end
 """
 
 
 class Client:
-    def __init__(self, world, name, guild=True, settings=None):
+    def __init__(self, world, name, guild=True, settings=None, unit_name=None):
         self.world, self.name, self.online = world, name, False
         self.rt = lua51.LuaRuntime(unpack_returned_tuples=True, encoding="latin-1")
         g = self.rt.globals()
         self.lua_client = self.rt.table_from({"name": name, "guild": guild})
+        if unit_name:
+            self.lua_client.unitName = unit_name  # WoW Forever: UnitName lacks the surname
         self.lua_client.guildRoster = self.rt.table()
         self.lua_client.groupMembers = self.rt.table()
         g.CLIENT = self.lua_client
@@ -174,7 +176,7 @@ class Client:
         self.g.FIRE_EVENT("PLAYER_ENTERING_WORLD", True, False)
         # Tests address the canvas in its own coordinates: unscaled, at the screen origin.
         self.fit_scale = self.ev("ArtPad.mainFrame:GetScale()")
-        self.ex("ArtPad.mainFrame:SetScale(1); ArtPad.mainFrame:SetPoint('BOTTOMLEFT', 0, 0)")
+        self.ex("ArtPad:SetView(1, 0, 0)")
 
     def tick(self, dt):
         self.g.NOW = self.world.now
@@ -205,7 +207,12 @@ class Client:
         return list(self.g.CHAT.values())
 
     def stroke(self, points, button="LeftButton", pump=0.0):
-        """Draw (or erase with RightButton) along points; pump the world between moves if asked."""
+        """Draw along points (button="erase" uses the eraser tool); pump the world between moves if asked."""
+        tool = None
+        if button == "erase":
+            tool = self.ev("ArtPad.tool")
+            self.ex("ArtPad:SetTool('eraser')")
+            button = "LeftButton"
         (x, y), rest = points[0], points[1:]
         self.g.PEN_DOWN(x, y, button)
         for (x, y) in rest:
@@ -213,6 +220,8 @@ class Client:
             if pump:
                 self.world.pump(pump)
         self.g.PEN_UP(button)
+        if tool:
+            self.ex("ArtPad:SetTool('%s')" % tool)
 
 
 class World:
@@ -223,12 +232,12 @@ class World:
         self.groups = {}  # name -> group id
         self.log = []
 
-    def add(self, name, guild=True, rank=5, settings=None, login=True):
+    def add(self, name, guild=True, rank=5, settings=None, login=True, unit_name=None):
         if guild:
             self.guild_ranks[name] = rank
             for c in self.clients.values():
                 c.update_roster()
-        c = Client(self, name, guild=guild, settings=settings)
+        c = Client(self, name, guild=guild, settings=settings, unit_name=unit_name)
         self.clients[name] = c
         if login:
             c.login()
@@ -318,7 +327,7 @@ def test_live_draw():
     check(b.items() == 1 and c.items() == 1, "Bob and Cat should have Alice's stroke")
     all_equal(w)
     check(b.ev("ArtPad.items[1].author") == "Alice", "author recorded")
-    b.ex("ArtPad.mainFrame:Show()")
+    b.ex("ArtPad.window:Show()")
     check(b.ev("ArtPad.nameTags.Alice ~= nil and ArtPad.nameTags.Alice:IsShown()"), "name tag shown for Alice")
     w.pump(4)
     check(not b.ev("ArtPad.nameTags.Alice:IsShown()"), "name tag fades out")
@@ -330,11 +339,15 @@ def test_live_draw():
     a.stroke(line(100, 300, 400, 300, 10))
     w.pump(2)
     check(b.ev("ArtPad.nameTags.Alice._fontSize") == 28, "name tag font compensates for canvas zoom")
-    # In loopback your own strokes get a tag, so tags can be checked solo.
+    # Your own name never shows on your own drawing, in loopback or not.
+    a.ex("ArtPad.window:Show()")
+    a.stroke(line(100, 400, 400, 400, 10))
     a.ex("ArtPad:SetLoopback(true)")
     a.stroke(line(100, 500, 400, 500, 10))
     w.pump(2)
-    check(a.ev("ArtPad.nameTags.Alice ~= nil"), "loopback shows your own name tag")
+    a.ex("ArtPad:RefreshStatus()")
+    check(a.ev("ArtPad.nameTags.Alice == nil"), "no name tag for yourself")
+    check(not a.ev("ArtPad.activityText:IsShown()"), "no 'you are drawing' line for yourself")
 
 
 def test_text_and_colors():
@@ -358,12 +371,12 @@ def test_late_join():
     a.stroke(line(100, 300, 600, 500, 40))
     b.ex('ArtPad:PlaceText(200, 200, "hi")')
     w.pump(3)
-    b.stroke(line(350, 50, 350, 150, 5), button="RightButton")  # erase the middle of the first stroke
+    b.stroke(line(350, 50, 350, 150, 5), button="erase")  # erase the middle of the first stroke
     w.pump(3)
     all_equal(w)
     check(a.ev("next(ArtPad.items[1].dead) ~= nil"), "erase should have killed some segments")
     d = w.add("Dana")
-    d.ex("ArtPad.mainFrame:Show()")
+    d.ex("ArtPad.window:Show()")
     while not d.ev("ArtPad.syncing"):  # sync starts a few seconds after login
         w.pump(0.25)
     while d.ev("ArtPad.syncing"):
@@ -389,7 +402,7 @@ def test_sync_while_drawing():
     check(e.ev("ArtPad.syncing"), "Eve should still be syncing")
     # Activity during Eve's download: a new stroke, an erase, Eve's own drawing.
     a.stroke(line(500, 1900, 900, 1950, 20), pump=0.05)
-    b.stroke(line(1000, 0, 1000, 2000, 20), button="RightButton")
+    b.stroke(line(1000, 0, 1000, 2000, 20), button="erase")
     e.stroke(line(2000, 2000, 2100, 2050, 10))
     w.pump(120)
     check(not e.ev("ArtPad.syncing"), "Eve finished syncing")
@@ -416,7 +429,7 @@ def test_undo():
     w.pump(2)
     check(a.ev(f'ArtPad.itemsById["Alice:{lid}"] ~= nil'), "Bob can't undo Alice's stroke")
     # Ctrl-Z is bound while the canvas is open.
-    a.ex("ArtPad.mainFrame:Show()")
+    a.ex("ArtPad.window:Show()")
     check(a.ev('BINDINGS["CTRL-Z"]') == "ArtPad_UndoButton", "Ctrl-Z bound to the undo button")
     a.ex('ArtPad_UndoButton._scripts.OnClick(ArtPad_UndoButton, "LeftButton")')
     w.pump(2)
@@ -428,36 +441,25 @@ def test_clear():
     w = World()
     a, b = w.add("Alice"), w.add("Bob")
     settle(w)
-    b.ex("ArtPad.mainFrame:Show()")
+    b.ex("ArtPad.window:Show()")
     b.ex("ArtPad.buttons.Clear()")
-    check("already empty" in (b.g.TOAST_TEXT() or ""), "clearing an empty canvas just says so")
+    check("Nothing to clear" in (b.g.TOAST_TEXT() or ""), "clearing an empty canvas just says so")
     a.stroke(line(0, 0, 100, 100))
     w.pump(2)
-    # First click only arms it, with an inline confirm (no modal popup)
     b.ex("ArtPad.buttons.Clear()")
-    check(b.items() == 1, "first click doesn't clear")
-    check(b.g.TOAST_ACTION() == "Clear for everyone", "toast offers the confirm action")
-    b.ex("CLICK(ArtPad_ToastAction)")
+    check(b.items() == 1 and b.ev("ArtPad_ClearConfirm:IsShown()"), "first click asks, doesn't clear")
+    check("Clear for all" in b.ev("ArtPad_ClearConfirm.title._text"), b.ev("ArtPad_ClearConfirm.title._text"))
+    b.ex("CLICK(ArtPad_ClearCancelButton)")
+    check(not b.ev("ArtPad_ClearConfirm:IsShown()") and b.items() == 1, "cancel keeps the drawing")
+    b.ex("ArtPad.buttons.Clear()")
+    b.ex("CLICK(ArtPad_ClearConfirmButton)")
     w.pump(2)
     check(a.items() == 0 and b.items() == 0, "confirmed clear wipes everyone's canvas")
-    check(any("Bob cleared the canvas" in m for m in a.chat()), "Alice (canvas closed) is told in chat")
-    # Clicking Clear twice also works
-    a.stroke(line(0, 0, 100, 100))
-    w.pump(2)
-    b.ex("ArtPad.buttons.Clear()")
-    b.ex("ArtPad.buttons.Clear()")
-    w.pump(2)
-    check(a.items() == 0, "double click clears")
-    # The confirmation expires
-    a.stroke(line(0, 0, 100, 100))
-    w.pump(2)
-    b.ex("ArtPad.buttons.Clear()")
-    w.pump(6)
-    b.ex("ArtPad.buttons.Clear()")
-    w.pump(1)
-    check(b.items() == 1, "a late second click re-arms instead of clearing")
+    check(any("Bob cleared the canvas" in m for m in a.chat()), "Alice (window closed) is told in chat")
     # Turning the warning off clears straight away
-    b.ex("ArtPad_Settings.WarnClear = false; ArtPad:DisarmClear()")
+    a.stroke(line(0, 0, 100, 100))
+    w.pump(2)
+    b.ex("ArtPad_Settings.WarnClear = false")
     b.ex("ArtPad.buttons.Clear()")
     w.pump(2)
     check(a.items() == 0 and b.items() == 0, "no confirmation when WarnClear is off")
@@ -541,7 +543,7 @@ def test_loopback():
     check(solo.items() == 0, "loopback draws nothing locally")
     w.pump(2)
     check(solo.items() == 1, "loopback stroke comes back from the server")
-    solo.stroke(line(50, -20, 50, 20), button="RightButton")
+    solo.stroke(line(50, -20, 50, 20), button="erase")
     w.pump(2)
     check(solo.ev("next(ArtPad.items[1].dead) ~= nil"), "loopback erase applied from echo")
     solo.ex("ArtPad:Undo()")
@@ -556,12 +558,12 @@ def test_wide_eraser():
     a.stroke(line(100, 100, 300, 100, 20))
     w.pump(2)
     # Swipe near the line without crossing it: the old intersection-only eraser missed this.
-    b.stroke([(200, 106), (204, 106), (208, 106)], button="RightButton")
+    b.stroke([(200, 106), (204, 106), (208, 106)], button="erase")
     w.pump(2)
     all_equal(w)
     check(a.ev("next(ArtPad.items[1].dead) ~= nil"), "nearby swipe erases")
     # Erasing every segment removes the stroke entirely.
-    b.stroke(line(90, 100, 310, 100, 40), button="RightButton")
+    b.stroke(line(90, 100, 310, 100, 40), button="erase")
     w.pump(2)
     check(a.items() == 0 and b.items() == 0, "fully erased stroke removed")
 
@@ -639,7 +641,7 @@ def test_status_bar_sharing_states():
     w = World()
     a, b = w.add("Alice"), w.add("Bob")
     settle(w)
-    a.ex("ArtPad.mainFrame:Show()")
+    a.ex("ArtPad.window:Show()")
 
     def label():
         a.ex("ArtPad:RefreshStatus()")
@@ -651,13 +653,15 @@ def test_status_bar_sharing_states():
     check("Now sharing with your party" in (a.g.TOAST_TEXT() or ""), "mode switch confirmed with a toast")
     b.ex('ArtPad:SetMode("RAID")')
     w.group("party", "Alice", "Bob")
-    check(label() == "Party (2)", f"party label, got {label()}")
+    check(label() == "Party · 2", f"party label, got {label()}")
     a.ex("ArtPad:SetLoopback(true)")
     check(label() == "Loopback test", "loopback label")
     a.ex("ArtPad:SetLoopback(false)")
     a.ex("CLICK(ArtPad_SharingButton)")
-    check(a.ev("ArtPad_Settings.Mode") == "GUILD", "pill toggles mode")
-    a.ex("ArtPad.mainFrame:Hide()")
+    check(a.ev("ArtPad_SharingPopover:IsShown()"), "pill opens the sharing popover")
+    a.ex("CLICK(ArtPad_ShareGuild)")
+    check(a.ev("ArtPad_Settings.Mode") == "GUILD", "picking guild switches mode")
+    a.ex("ArtPad.window:Hide()")
     a.ex('ArtPad.OnSlashCommand("raid")')
     check(any("Now sharing with your party" in m for m in a.chat()), "closed canvas: feedback in chat")
 
@@ -686,7 +690,7 @@ def test_sync_progress_states():
     w, a = big_canvas_world()
     join_at = w.now
     e = w.add("Eve")
-    e.ex("ArtPad.mainFrame:Show()")
+    e.ex("ArtPad.window:Show()")
     seen, progress, texts = set(), [], []
     for _ in range(400):
         w.pump(0.25)
@@ -695,17 +699,19 @@ def test_sync_progress_states():
         seen.add(phase)
         if phase == "downloading":
             progress.append(e.ev("ArtPad.syncProgress"))
-            check(e.ev("ArtPad.syncBar:IsShown()"), "progress bar visible while downloading")
+            e.ex("ArtPad:RefreshStatus()")
+            check(e.ev("ArtPad.loadingCard:IsShown()"), "progress card visible while downloading")
         if e.ev("ArtPad.syncText:IsShown()"):
             texts.append(e.ev("ArtPad.syncText._text"))
         if phase is None and "downloading" in seen:
             break
     check({"searching", "downloading"} <= seen, f"went through both phases, saw {seen}")
     check(any(t.startswith("Looking for a canvas") for t in texts), "indeterminate state while searching")
-    check(any(t.startswith("Loading canvas from Alice") for t in texts), "names the source while loading")
+    check(any(t.startswith("Loading from Alice") for t in texts), "names the source while loading")
     check(progress == sorted(progress) and max(progress) > 0, f"progress only moves forward: {progress}")
     check(any(0 < p < 100 for p in progress), "real intermediate progress was reported")
-    check(not e.ev("ArtPad.syncBar:IsShown()"), "progress bar gone when done")
+    e.ex("ArtPad:RefreshStatus()")
+    check(not e.ev("ArtPad.loadingCard:IsShown()"), "progress card gone when done")
     print(f"    late join of the big canvas finished at t={w.now - join_at:.1f}s after login")
     check("Loaded the canvas from Alice" in (e.g.TOAST_TEXT() or ""), "success toast")
     all_equal(w)
@@ -714,7 +720,7 @@ def test_sync_progress_states():
 def test_sync_failure_offers_retry():
     w, a = big_canvas_world()
     b = w.add("Bob")
-    b.ex("ArtPad.mainFrame:Show()")
+    b.ex("ArtPad.window:Show()")
     for _ in range(200):
         w.pump(0.25)
         if b.ev("ArtPad.syncPhase") == "downloading" and (b.ev("ArtPad.syncProgress") or 0) > 0:
@@ -735,7 +741,7 @@ def test_empty_state_and_undo_button():
     w = World()
     a = w.add("Alice")
     settle(w)
-    a.ex("ArtPad.mainFrame:Show()")
+    a.ex("ArtPad.window:Show()")
     w.pump(1)
     check(a.ev("ArtPad.emptyHint:IsShown()"), "empty canvas shows the hint")
     check(not a.ev("ArtPad.undoButton:IsEnabled()"), "nothing to undo: button disabled")
@@ -753,11 +759,11 @@ def test_activity_text():
     w = World()
     a, b, c = w.add("Alice"), w.add("Bob"), w.add("Cat")
     settle(w)
-    b.ex("ArtPad.mainFrame:Show()")
+    b.ex("ArtPad.window:Show()")
     a.stroke(line(0, 0, 100, 100))
     c.stroke(line(0, 200, 100, 300))
     w.pump(1)
-    check(b.ev("ArtPad.activityText._text") == "Alice and Cat are drawing", b.ev("ArtPad.activityText._text"))
+    check(b.ev("ArtPad.activityText._text") == "Alice, Cat drawing", b.ev("ArtPad.activityText._text"))
     check(b.ev("ArtPad.activityText:IsShown()"), "activity visible")
     w.pump(7)
     check(not b.ev("ArtPad.activityText:IsShown()"), "activity clears when people stop")
@@ -767,14 +773,14 @@ def test_text_placement_preview():
     w = World()
     a, b = w.add("Alice"), w.add("Bob")
     settle(w)
-    a.ex("ArtPad.mainFrame:Show()")
+    a.ex("ArtPad.window:Show()")
     a.ex("CLICK(ArtPad_TextButton)")
     a.ex("ArtPad.textInput:SetText('hello'); ArtPad.textInput._scripts.OnEnterPressed(ArtPad.textInput)")
     check(a.ev("ArtPad.state") == "TEXT" and a.ev("ArtPad.ghostText:IsShown()"), "ghost text follows the cursor")
     check("Esc to cancel" in (a.g.TOAST_TEXT() or ""), "explains how to place or cancel")
     a.ex("CLICK(ArtPad_CloseButton)")  # what Escape is bound to
     check(a.ev("ArtPad.state") == "SLEEP" and not a.ev("ArtPad.ghostText:IsShown()"), "Escape cancels placement")
-    check(a.ev("ArtPad.mainFrame:IsShown()"), "...without closing the canvas")
+    check(a.ev("ArtPad.window:IsShown()"), "...without closing the canvas")
     a.ex("ArtPad.textInput:SetText('hello'); ArtPad.textInput._scripts.OnEnterPressed(ArtPad.textInput)")
     a.g.PEN_DOWN(300, 300, "LeftButton")
     a.g.PEN_UP("LeftButton")
@@ -784,37 +790,42 @@ def test_text_placement_preview():
 
 
 
-def test_strokes_stay_on_canvas():
+def test_strokes_pinned_to_canvas():
     w = World()
     a, b = w.add("Alice"), w.add("Bob")
     settle(w)
     W, H = 3840, 2160
-    # Start inside, leave through the right edge, come back in further down.
+
+    def points(i):
+        n = int(a.ev(f"ArtPad.items[{i}].n"))
+        return [(a.ev(f"ArtPad.items[{i}].px[{j}]"), a.ev(f"ArtPad.items[{i}].py[{j}]")) for j in range(1, n + 1)]
+
+    # Leaving through the right edge and coming back: one stroke that runs along the edge.
     a.stroke([(3700, 1000), (3800, 1000), (3900, 1000), (4000, 900), (3900, 800), (3800, 800), (3700, 800)])
     w.pump(2)
     all_equal(w)
-    check(a.items() == 2, f"leaving and re-entering makes two strokes, got {a.items()}")
-    for i in (1, 2):
-        n = int(a.ev(f"ArtPad.items[{i}].n"))
-        for j in range(1, n + 1):
-            x, y = a.ev(f"ArtPad.items[{i}].px[{j}]"), a.ev(f"ArtPad.items[{i}].py[{j}]")
-            check(0 <= x <= W and 0 <= y <= H, f"point ({x},{y}) is off the canvas")
-    check(a.ev("ArtPad.items[1].px[ArtPad.items[1].n]") == W, "first stroke ends exactly at the edge")
-    check(a.ev("ArtPad.items[2].px[1]") == W, "second stroke starts exactly at the edge")
-    # Dragging entirely off the canvas draws nothing more.
-    a.stroke([(100, 2100), (100, 2300), (500, 2400), (900, 2300)])
+    check(a.items() == 1, f"one stroke, got {a.items()}")
+    pts = points(1)
+    check(all(0 <= x <= W and 0 <= y <= H for x, y in pts), "every point on the canvas")
+    check(any(x == W for x, _ in pts), "the stroke follows the right edge")
+    # Starting in the margin still draws, pinned to the edge.
+    a.stroke([(100, 2300), (500, 2400), (900, 2300)])
     w.pump(2)
-    check(a.items() == 3, "only the on-canvas part of the last stroke exists")
-    check(int(a.ev("ArtPad.items[3].n")) == 2, "it runs from the start point to the top edge")
-    check(a.ev("ArtPad.items[3].py[2]") == H, "...ending exactly on the edge")
+    check(a.items() == 2, "a stroke started in the margin draws")
+    check(all(y == H for _, y in points(2)), "...along the top edge")
     all_equal(w)
 
 
 def test_empty_hint_follows_canvas():
     w = World()
     a = w.add("Alice")
-    check(a.ev("select(2, ArtPad.emptyHint:GetPoint()) == ArtPad.mainFrame"), "hint is anchored to the canvas")
-    check(a.ev("ArtPad.emptyHint:GetParent() ~= ArtPad.mainFrame"), "but not scaled with it")
+    check(a.ev("select(2, ArtPad.emptyHint:GetPoint()) == ArtPad.viewport"), "hint is centred in the canvas area")
+    check(a.ev("ArtPad.emptyHint:GetParent() ~= ArtPad.mainFrame"), "and not scaled with the canvas")
+    check(a.ev("ArtPad.emptyHint:GetParent() == ArtPad.viewport"), "clipped to the canvas area")
+    a.ex("ArtPad.window:Show(); ArtPad.window:SetSize(620, ArtPad.minHeight); ArtPad:RefreshStatus()")
+    vw = a.ev("(function() local w = ArtPad:ViewportSize() return w end)()")
+    check(a.ev("ArtPad.emptyHint.body:GetWidth()") <= vw - 32, "hint wraps to a small window")
+    check("\n" in a.ev("ArtPad.emptyHint.body._text") and "·" not in a.ev("ArtPad.emptyHint.body._text"), "one control per line when narrow")
 
 
 
@@ -822,7 +833,7 @@ def test_empty_hint_steady_during_search():
     # Solo: the search finds nobody, and the hint must not blink off and back on.
     w = World()
     a = w.add("Alice")
-    a.ex("ArtPad.mainFrame:Show()")
+    a.ex("ArtPad.window:Show()")
     seen_search = False
     for _ in range(60):
         w.pump(0.2)
@@ -834,7 +845,7 @@ def test_empty_hint_steady_during_search():
     check(a.ev("ArtPad.emptyHint:IsShown()"), "hint still there after nobody answered")
     # With a canvas to load, it steps aside once the download starts.
     b = w.add("Bob")
-    b.ex("ArtPad.mainFrame:Show()")
+    b.ex("ArtPad.window:Show()")
     a.stroke(line(0, 0, 100, 100))
     w.pump(1)
     saw_download = False
@@ -896,7 +907,7 @@ def test_heavy_scribbling_keeps_up():
         w = World()
         a, b = w.add("Alice"), w.add("Bob")
         settle(w)
-        a.ex("ArtPad.mainFrame:Show()")
+        a.ex("ArtPad.window:Show()")
         start_msgs = len([e for e in w.log if e[0] == "Alice"])
         start_bytes = sum(e[4] for e in w.log if e[0] == "Alice")
         # Measure how far behind Bob is while drawing, halfway through and at the end
@@ -989,7 +1000,7 @@ def test_stamps():
     w.pump(15)
     all_equal(w)
     # erase and undo
-    b.stroke([(780, 480), (820, 520)], button="RightButton")
+    b.stroke([(780, 480), (820, 520)], button="erase")
     w.pump(2)
     check(a.items() == 1, "stamp erased for everyone")
     a.ex("ArtPad:Undo()")
@@ -1002,11 +1013,16 @@ def test_map_backdrop():
     w = World()
     a, b = w.add("Alice"), w.add("Bob")
     settle(w)
-    a.ex("ArtPad.mainFrame:Show()")
+    a.ex("ArtPad.window:Show()")
     a.ex("CLICK(ArtPad_MapButton)")
     w.pump(2)
+    b.ex("EXPLORED = {}")  # Bob has explored nothing himself...
     check(b.ev("ArtPad.backdropMap") == 85, "map shared")
-    check(b.ev("ArtPad.mapTiles[1]:IsShown()"), "map tiles drawn")
+    check(b.ev("ArtPad.backdropOverlays") == "300,200,100,50,501.502", f"sharer's explored areas sent: {b.ev('ArtPad.backdropOverlays')}")
+    shown = b.ev("(function() local n = 0 for _, t in ipairs(ArtPad.mapTextures) do if t:IsShown() then n = n + 1 end end return n end)()")
+    check(shown == 12 + 2, f"...but sees the base map plus Alice's explored areas ({shown} textures)")
+    ratio = b.ev("ArtPad.mapTextures[13]._w / ArtPad.mapTextures[14]._w")
+    check(abs(ratio - 256 / 44) < 1e-6, f"explored tiles laid out like the world map (full tile + 44px edge, ratio {ratio:.3f})")
     check("Map85" in (a.g.TOAST_TEXT() or ""), "toast names the map")
     a.stroke(line(0, 0, 100, 100))
     w.pump(2)
@@ -1021,7 +1037,7 @@ def test_map_backdrop():
     check(a.items() == 0 and a.ev("ArtPad.backdropMap") == 85, "clear keeps the map")
     a.ex("CLICK(ArtPad_MapButton)")
     w.pump(2)
-    check(b.ev("ArtPad.backdropMap") is None and not b.ev("ArtPad.mapTiles[1]:IsShown()"), "map removed for everyone")
+    check(b.ev("ArtPad.backdropMap") is None and not b.ev("ArtPad.mapTextures[1]:IsShown()"), "map removed for everyone")
     # No map available where you are
     a.ex("MAP_ID = nil")
     a.ex("CLICK(ArtPad_MapButton)")
@@ -1036,17 +1052,18 @@ def test_map_backdrop():
 def test_fit_to_screen():
     w = World()
     a = w.add("Alice")
-    check(abs(a.fit_scale - 0.92 * 0.5) < 1e-6, f"first open fits the screen (scale {a.fit_scale})")
-    a.ex("ArtPad.mainFrame:SetScale(2.5)")
+    fit = 0.96 * min((1000 - 48 - 220) / 3840, (640 - 40 - 26) / 2160)
+    check(abs(a.fit_scale - fit) < 1e-9, f"first open fits the window (scale {a.fit_scale})")
+    a.ex("ArtPad:SetView(2.5, 0, 0)")
     a.ex("CLICK(ArtPad_CenterButton)")
-    check(abs(a.ev("ArtPad.mainFrame:GetScale()") - 0.46) < 1e-6, "Fit button fits again")
+    check(abs(a.ev("ArtPad.mainFrame:GetScale()") - fit) < 1e-9, "Fit button fits again")
 
 
 def test_swatches_and_tools():
     w = World()
     a = w.add("Alice")
     a.ex("CLICK(ArtPad_Swatch2)")
-    check(a.ev("ArtPad.brushColor.r") == 1 and a.ev("ArtPad.brushColor.g") == 0.25, "swatch sets the colour")
+    check(a.ev("ArtPad.brushColor.r") == 1 and a.ev("ArtPad.brushColor.g") == 0.42, "swatch sets the colour")
     check(a.ev("ArtPad_Swatch2.ring:IsShown()") and not a.ev("ArtPad_Swatch1.ring:IsShown()"), "current colour is marked")
     a.ex("CLICK(ArtPad_SwatchClass)")
     check(a.ev("ArtPad.brushColor.b") == 0.92, "class colour")
@@ -1061,50 +1078,45 @@ def test_swatches_and_tools():
 
 
 
-def test_movable_toolbar_and_dock():
+def test_window_move_and_resize():
     w = World()
     a = w.add("Alice")
-    check(a.ev("select(2, ArtPad.controlsFrame:GetPoint()) == UIParent"), "toolbar starts in its default spot")
-    # Simulate dragging the toolbar's grip somewhere else
+    check(a.ev("(ArtPad.window:GetPoint())") == "CENTER", "window starts centred")
     a.ex("""
-        local grip = ArtPad_ToolbarGrip
-        grip._scripts.OnDragStart(grip)
-        ArtPad.controlsFrame:ClearAllPoints()
-        ArtPad.controlsFrame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 300, 120)
-        grip._scripts.OnDragStop(grip)
+        local t = ArtPad_TitleBar
+        t._scripts.OnDragStart(t)
+        ArtPad.window:ClearAllPoints()
+        ArtPad.window:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 120, -80)
+        t._scripts.OnDragStop(t)
     """)
-    check(a.ev("ArtPad_Settings.FramePositions.toolbar[3]") == 300, "toolbar position saved")
-    a.ex("""
-        local grip = ArtPad_DockGrip
-        grip._scripts.OnDragStart(grip)
-        ArtPad.dock:ClearAllPoints()
-        ArtPad.dock:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -40, -200)
-        grip._scripts.OnDragStop(grip)
-    """)
-    check(a.ev("ArtPad_Settings.FramePositions.dock[1]") == "TOPRIGHT", "dock position saved")
-    # Positions survive a reload
-    saved = {"FramePositions": {
-        "toolbar": ["BOTTOMLEFT", "BOTTOMLEFT", 300, 120],
-        "dock": ["TOPRIGHT", "TOPRIGHT", -40, -200],
-    }}
-    b = w.add("Bob", settings=saved)
-    check(b.ev("(select(4, ArtPad.controlsFrame:GetPoint()))") == 300, "toolbar restored after reload")
-    check(b.ev("(ArtPad.dock:GetPoint())") == "TOPRIGHT", "dock restored after reload")
-    # Right-click a grip resets that frame; /ap resetui resets both
-    b.ex("ArtPad_DockGrip._scripts.OnMouseUp(ArtPad_DockGrip, 'RightButton')")
-    check(b.ev("(ArtPad.dock:GetPoint())") == "LEFT", "right-click resets the dock")
+    check(a.ev("ArtPad_Settings.FramePositions.window[3]") == 120, "dragging the title bar moves and saves the window")
+    # Resize from the corner; a fitted canvas stays fitted
+    a.ex("ArtPad_Settings.View = false")
+    a.ex("ArtPad_ResizeGrip._scripts.OnMouseDown(ArtPad_ResizeGrip, 'LeftButton')")
+    a.ex("ArtPad.window:SetSize(1300, 800)")
+    a.ex("ArtPad_ResizeGrip._scripts.OnMouseUp(ArtPad_ResizeGrip, 'LeftButton')")
+    check(a.ev("ArtPad_Settings.WindowSize[1]") == 1300, "new size saved")
+    vw, vh = 1300 - 48 - 220, 800 - 40 - 26
+    expect = 0.96 * min(vw / 3840, vh / 2160)
+    check(abs(a.ev("ArtPad.mainFrame:GetScale()") - expect) < 1e-9, "canvas refits the bigger window")
+    # Too small is clamped
+    a.ex("ArtPad_ResizeGrip._scripts.OnMouseDown(ArtPad_ResizeGrip, 'LeftButton'); ArtPad.window:SetSize(100, 100)")
+    a.ex("ArtPad_ResizeGrip._scripts.OnMouseUp(ArtPad_ResizeGrip, 'LeftButton')")
+    check(a.ev("ArtPad.window:GetWidth()") >= 620 and a.ev("ArtPad.window:GetHeight()") >= 420, "minimum size")
+    # Saved layout comes back
+    b = w.add("Bob", settings={"FramePositions": {"window": ["TOPLEFT", "TOPLEFT", 50, -60]}, "WindowSize": [900, 700]})
+    check(b.ev("(select(4, ArtPad.window:GetPoint()))") == 50 and b.ev("ArtPad.window:GetWidth()") == 900, "restored after reload")
     b.ex("ArtPad.OnSlashCommand('resetui')")
-    check(b.ev("(ArtPad.controlsFrame:GetPoint())") == "TOP", "resetui resets the toolbar")
-    check(b.ev("ArtPad_Settings.FramePositions.toolbar") is None, "and forgets the saved spot")
+    check(b.ev("(ArtPad.window:GetPoint())") == "CENTER" and b.ev("ArtPad.window:GetWidth()") == 1000, "resetui puts it back")
 
 
 def test_text_input_cancels():
     w = World()
     a = w.add("Alice")
-    a.ex("ArtPad.mainFrame:Show()")
+    a.ex("ArtPad.window:Show()")
     a.ex("CLICK(ArtPad_TextButton)")
     check(a.ev("ArtPad.textInput:IsShown()"), "text box opens")
-    check("Esc or click away" in (a.g.TOAST_TEXT() or ""), "explains how to finish or cancel")
+    check("Esc to cancel" in (a.g.TOAST_TEXT() or ""), "explains how to finish or cancel")
     # Clicking away (focus lost) closes it and clears the hint
     a.ex("ArtPad.textInput._scripts.OnEditFocusLost(ArtPad.textInput)")
     check(not a.ev("ArtPad.textInput:IsShown()"), "clicking away closes the box")
@@ -1196,31 +1208,291 @@ def test_commands_share_messages():
 
 
 
-def test_canvas_handle_moves_canvas():
+def test_pan_zoom_fit():
     w = World()
     a = w.add("Alice")
-    a.ex("ArtPad.mainFrame:Show()")
-    check(a.ev("select(2, ArtPad_CanvasHandle:GetPoint()) == ArtPad.mainFrame"), "handle sits on the canvas edge")
-    check(a.ev("ArtPad_CanvasHandle:GetParent() ~= ArtPad.mainFrame"), "but isn't scaled with the canvas")
-    # Drag the handle
-    a.ex("""
-        local h = ArtPad_CanvasHandle
-        h._scripts.OnDragStart(h)
-    """)
-    check(a.ev("ArtPad.state") == "MOVE" and a.ev("ArtPad.mainFrame._moving"), "dragging the handle moves the canvas")
-    a.ex("""
-        ArtPad.mainFrame:SetPoint("BOTTOMLEFT", 250, 75)
-        ArtPad_CanvasHandle._scripts.OnDragStop(ArtPad_CanvasHandle)
-    """)
-    check(a.ev("ArtPad.state") == "SLEEP" and not a.ev("ArtPad.mainFrame._moving"), "drop ends the move")
-    check(a.ev("ArtPad_Settings.Position[1]") == 250, "new position remembered")
-    # Right-click fits the canvas again
-    a.ex("ArtPad_CanvasHandle._scripts.OnMouseUp(ArtPad_CanvasHandle, 'RightButton')")
-    check(a.ev("ArtPad_Settings.Position") is False, "right-click fits it back to the screen")
-    # Shift no longer hijacks drawing
-    a.ex("ArtPad.mainFrame:SetScale(1); ArtPad.mainFrame:SetPoint('BOTTOMLEFT', 0, 0); SHIFT_DOWN = true")
-    a.stroke(line(100, 100, 300, 300))
-    check(a.items() == 1, "shift-click draws now instead of moving the canvas")
+    a.ex("ArtPad.window:Show(); ArtPad:SetView(0.5, -1000, -500)")
+    # Middle-drag pans
+    a.ex("CURSOR_X, CURSOR_Y = 300, 300; ArtPad.viewport._scripts.OnMouseDown(ArtPad.viewport, 'MiddleButton')")
+    check(a.ev("ArtPad.state") == "PAN", "middle button pans")
+    a.ex("CURSOR_X, CURSOR_Y = 340, 280; ArtPad.viewport._scripts.OnUpdate(ArtPad.viewport, 0.016)")
+    a.ex("ArtPad.viewport._scripts.OnMouseUp(ArtPad.viewport, 'MiddleButton')")
+    check(a.ev("ArtPad.view[2]") == -1000 + 40 / 0.5 and a.ev("ArtPad.view[3]") == -500 - 20 / 0.5, "canvas follows the drag")
+    check(a.ev("ArtPad_Settings.View[2]") == -920, "view saved")
+    check(a.items() == 0, "panning doesn't draw")
+    # Right-drag pans too
+    a.ex("ArtPad:SetView(0.5, -1000, -500); CURSOR_X, CURSOR_Y = 300, 300; ArtPad.viewport._scripts.OnMouseDown(ArtPad.viewport, 'RightButton')")
+    check(a.ev("ArtPad.state") == "PAN", "right button pans")
+    a.ex("CURSOR_X, CURSOR_Y = 320, 300; ArtPad.viewport._scripts.OnUpdate(ArtPad.viewport, 0.016)")
+    a.ex("ArtPad.viewport._scripts.OnMouseUp(ArtPad.viewport, 'RightButton')")
+    check(a.ev("ArtPad.view[2]") == -1000 + 20 / 0.5, "right-drag moves the canvas")
+    check(a.items() == 0, "right-drag doesn't draw or erase")
+    # The canvas always covers the view: panning stops at its edges
+    vw, vh = a.ev("(function() local w, h = ArtPad:ViewportSize() return w end)()"), a.ev("select(2, ArtPad:ViewportSize())")
+    a.ex("ArtPad:SetView(0.5, -1000, -500); CURSOR_X, CURSOR_Y = 300, 300; ArtPad.viewport._scripts.OnMouseDown(ArtPad.viewport, 'RightButton')")
+    a.ex("CURSOR_X, CURSOR_Y = 300000, -300000; ArtPad.viewport._scripts.OnUpdate(ArtPad.viewport, 0.016)")
+    a.ex("ArtPad.viewport._scripts.OnMouseUp(ArtPad.viewport, 'RightButton')")
+    check(a.ev("ArtPad.view[2]") == 0, "left edge stops at the view's left")
+    check(abs(a.ev("ArtPad.view[3]") * 0.5 - (vh - 2160 * 0.5)) < 1e-6, "top edge stops at the view's top")
+    # Zoom limits: no further out than fit, no further in than 6x fit
+    fit = a.ev("ArtPad:FitScale()")
+    a.ex("ArtPad:SetView(0.01, 0, 0)")
+    check(abs(a.ev("ArtPad.view[1]") - fit) < 1e-9, "can't zoom out past the whole canvas")
+    check(abs(a.ev("ArtPad.view[2]") * fit - (vw - 3840 * fit) / 2) < 1e-6, "fitted canvas is centred")
+    a.ex("ArtPad:SetView(50, 0, 0)")
+    check(abs(a.ev("ArtPad.view[1]") - 6 * fit) < 1e-9, "zoom in stops at 6x")
+    # Wheel zoom keeps the point under the cursor still
+    a.ex("ArtPad:SetView(0.5, 0, 0); CURSOR_X, CURSOR_Y = 200, 100")
+    before = a.ev("(function() local x, y = ArtPad.CursorOnCanvas(ArtPad.mainFrame) return x end)()")
+    a.ex("ArtPad.viewport._scripts.OnMouseWheel(ArtPad.viewport, 1)")
+    after = a.ev("(function() local x, y = ArtPad.CursorOnCanvas(ArtPad.mainFrame) return x end)()")
+    check(a.ev("ArtPad.view[1]") > 0.5, "wheel zooms in")
+    check(abs(before - after) <= 1, f"point under the cursor stays put ({before} -> {after})")
+    check(a.ev("ArtPad.zoomLabel._text") == str(round(a.ev("ArtPad.view[1]") * 100)) + "%", "zoom label shows the level")
+    # Zoom buttons and Fit
+    a.ex("CLICK(ArtPad_ZoomOut)")
+    a.ex("CLICK(ArtPad_CenterButton)")
+    check(a.ev("ArtPad_Settings.View") is False, "Fit returns to fitted")
+    # Keys only while hovering the canvas
+    a.ex("ArtPad.viewport._scripts.OnEnter(ArtPad.viewport)")
+    check(a.ev('BINDINGS["]"]') == "ArtPad_BrushBigger", "brush keys bound over the canvas")
+    check(a.ev('BINDINGS["P"]') is None, "no single-letter tool keys")
+    a.ex("ArtPad.viewport._scripts.OnLeave(ArtPad.viewport)")
+    check(a.ev('BINDINGS["]"]') is None, "and released when the mouse leaves")
+
+
+
+def test_laser_pointer():
+    w = World()
+    a, b = w.add("Alice"), w.add("Bob")
+    settle(w)
+    b.ex("ArtPad.window:Show()")
+    a.ex("CLICK(ArtPad_Tool_laser)")
+    check(a.ev("ArtPad.tool") == "laser", "laser tool selected")
+    a.stroke(line(200, 200, 600, 400, 20))
+    check(a.ev("#ArtPad.laserLines") > 0, "laser shows locally")
+    w.pump(1)
+    check(b.ev("#ArtPad.laserLines") > 0, "others see the laser")
+    check(a.items() == 0 and b.items() == 0, "laser isn't stored")
+    check(b.ev("ArtPad.nameTags.Alice ~= nil"), "laser is labelled with who's pointing")
+    w.pump(3)
+    check(b.ev("#ArtPad.laserLines") == 0, "laser fades out")
+    c = w.add("Cat")
+    w.pump(10)
+    check(c.items() == 0, "late joiners don't get old laser strokes")
+
+
+def test_show_my_name_off():
+    w = World()
+    a, b = w.add("Alice"), w.add("Bob")
+    settle(w)
+    b.ex("ArtPad.window:Show()")
+    a.ex("ArtPad.window:Show(); CLICK(ArtPad_SharingButton); CLICK(ArtPad_ToggleMyName)")
+    check(a.ev("ArtPad_Settings.ShowMyName") is False, "toggle turns it off")
+    a.stroke(line(0, 0, 200, 200))
+    w.pump(2)
+    b.ex("ArtPad:RefreshStatus()")
+    check(b.items() == 1, "the drawing still arrives")
+    check(b.ev("ArtPad.nameTags.Alice == nil"), "but without Alice's name tag")
+    check(not b.ev("ArtPad.activityText:IsShown()"), "and she isn't listed as drawing")
+    check(not b.ev("ArtPad.presenceBadges[1]:IsShown()"), "or in the title bar")
+    a.ex("ArtPad_Settings.ShowMyName = true")
+    a.stroke(line(0, 300, 200, 300))
+    w.pump(2)
+    check(b.ev("ArtPad.nameTags.Alice ~= nil"), "names come back when turned on")
+
+
+def test_sharing_popover_toggles():
+    w = World()
+    a = w.add("Alice")
+    a.ex("ArtPad.window:Show(); CLICK(ArtPad_SharingButton)")
+    check(a.ev("ArtPad_ShareGuild.sub._text") == "1 online", a.ev("ArtPad_ShareGuild.sub._text"))
+    a.ex("CLICK(ArtPad_ToggleAdmin); CLICK(ArtPad_ToggleNames)")
+    check(a.ev("ArtPad_Settings.AdminOnly") is True and a.ev("ArtPad_Settings.NameTags") is False, "toggles change settings")
+    a.ex("CLICK(ArtPad_ShareGroup)")
+    check(a.ev("ArtPad_Settings.Mode") == "RAID", "switch to party/raid")
+    a.ex("CLICK(ArtPad_CloseButton)")  # Escape closes the popover first
+    check(not a.ev("ArtPad_SharingPopover:IsShown()") and a.ev("ArtPad.window:IsShown()"), "Esc closes the popover, not the window")
+
+
+def test_marker_picker():
+    w = World()
+    a, b = w.add("Alice"), w.add("Bob")
+    settle(w)
+    a.ex("ArtPad.window:Show(); CLICK(ArtPad_Tool_markers)")
+    check(a.ev("ArtPad_MarkerPicker:IsShown()"), "markers button opens the picker")
+    a.ex("CLICK(ArtPad_Stamp_r7)")
+    check(not a.ev("ArtPad_MarkerPicker:IsShown()") and a.ev("ArtPad.tool") == "stamp" and a.ev("ArtPad.stampKey") == "r7", "picking a marker selects it")
+    a.stroke([(400, 400)])
+    w.pump(2)
+    check(b.items() == 1 and b.ev("ArtPad.items[1].key") == "r7", "marker placed and shared")
+
+
+def test_eraser_tool():
+    w = World()
+    a, b = w.add("Alice"), w.add("Bob")
+    settle(w)
+    a.stroke(line(100, 100, 400, 100, 30))
+    w.pump(2)
+    b.ex("CLICK(ArtPad_Tool_eraser)")
+    b.stroke(line(250, 60, 250, 140, 8))  # left-drag with the eraser tool
+    w.pump(2)
+    check(a.ev("next(ArtPad.items[1].dead) ~= nil"), "eraser tool erases with a left-drag")
+    all_equal(w)
+
+
+def test_inspector_controls():
+    w = World()
+    a = w.add("Alice")
+    a.ex("ArtPad_BrushSlider._scripts.OnValueChanged(ArtPad_BrushSlider, 9, true)")
+    check(a.ev("ArtPad_Settings.BrushSize") == 9 and a.ev("ArtPad.brushValue._text") == "9 px", "brush slider")
+    a.ex("CLICK(ArtPad_BrushPreset4)")
+    check(a.ev("ArtPad_Settings.BrushSize") == 13, "brush preset")
+    a.ex("ArtPad_OpacitySlider._scripts.OnValueChanged(ArtPad_OpacitySlider, 60, true)")
+    check(abs(a.ev("ArtPad.brushColor.a") - 0.6) < 1e-9 and a.ev("ArtPad.opacityValue._text") == "60%", "opacity slider")
+    a.ex("CLICK(ArtPad_Swatch2)")
+    check(abs(a.ev("ArtPad.brushColor.a") - 0.6) < 1e-9, "swatches keep the opacity")
+    a.ex("ArtPad.window:Show(); CLICK(ArtPad_MapButton)")
+    check(a.ev("ArtPad.mapTitle._text") == "Map85" and a.ev("ArtPad.mapSub._text") == "Shared by you", "map card")
+    a.ex("ArtPad_MapDimSlider._scripts.OnValueChanged(ArtPad_MapDimSlider, 60, true)")
+    check(abs(a.ev("ArtPad_Settings.MapDim") - 0.6) < 1e-9 and a.ev("ArtPad.mapDim.color[4]") == 0.6, "map dimming")
+    check(a.ev("ArtPad.mapDim:IsShown()"), "dimming layer on while a map is up")
+
+
+def test_window_fits_the_controls():
+    w = World()
+    a = w.add("Alice")
+    rail = a.ev("ArtPad.minHeight") - 40 - 26
+    # last tool's bottom edge, measured from the top of the rail
+    last = a.ev("(function() local p = { ArtPad_Tool_eraser:GetPoint() } return -p[#p] + 40 end)()")
+    check(last + 8 + 46 <= rail, f"tools ({last}px) and undo fit at the smallest size ({rail}px)")
+    a.ex("ArtPad.window:SetSize(620, 300); ArtPad.resizing = {}; ArtPad:StopResize()")
+    check(a.ev("ArtPad.window:GetHeight()") == a.ev("ArtPad.minHeight"), "resizing can't go below that")
+
+
+def test_long_scribble_spreads_over_layers():
+    # One frame with too many regions stops rendering in the real client; drawings are split
+    # across draw layers of at most LAYER_SIZE regions each.
+    w = World()
+    a = w.add("Alice")
+    pts = [(100 + (i % 2) * 3000, 100 + i * 0.4) for i in range(5000)]
+    a.stroke(pts)
+    size = a.ev("ArtPad.LAYER_SIZE")
+    layers = a.ev("#ArtPad.drawLayers")
+    check(layers > 1, f"a long scribble uses several layers ({layers})")
+    for i in range(1, layers + 1):
+        n = a.ev(f"ArtPad.drawLayers[{i}].regions")
+        check(n <= size, f"layer {i} holds {n} regions (max {size})")
+    check(a.ev("ArtPad.overlay:GetFrameLevel()") > a.ev(f"ArtPad.drawLayers[{layers}]:GetFrameLevel()"),
+          "previews and cursor stay above the drawing")
+
+
+def test_line_budget():
+    # The client stops drawing lines past 16384; a huge scribble must stay under that.
+    w = World()
+    a = w.add("Alice")
+    pts = [(100 + (i % 2) * 3000, 100 + (i * 0.8) % 2000) for i in range(6000)]
+    a.stroke(pts)
+    used = a.ev("ArtPad.quadsInUse")
+    check(used <= a.ev("ArtPad.LINE_CAP") + 50, f"quads in use ({used}) stay under the cap")
+    check(a.ev("ArtPad.coarse"), "past the budget curves are drawn straight")
+    a.ex("ArtPad:ClearCanvas()")
+    check(a.ev("ArtPad.linesInUse") == 0 and a.ev("ArtPad.quadsInUse") == 0 and not a.ev("ArtPad.coarse"),
+          "clearing frees every line and quad and restores curves")
+    a.ex('ArtPad:AddText("x:1", "x", 10, 10, "hello", {r=1,g=1,b=1,a=1}); ArtPad:AddStamp("x:2", "x", "r1", 50, 50, 40)')
+    check(a.ev("ArtPad.quadsInUse") == 6, "text glyphs and markers count too")
+    a.ex("ArtPad:ClearCanvas()")
+    # Gentle curves need few pieces
+    a.stroke([(500 + i * 20, 500 + 0.02 * (i * 20 - 500) ** 2 / 10) for i in range(50)])
+    per_seg = a.ev("ArtPad.linesInUse") / 49
+    check(per_seg < 3, f"a gentle curve uses few lines per segment ({per_seg:.2f})")
+
+
+def test_bench_is_local():
+    w = World()
+    a, b = w.add("Alice"), w.add("Bob")
+    settle(w)
+    a.ex("ArtPad.OnSlashCommand('bench lines 500 200')")
+    check(len(a.ev("ArtPad.bench.regions")) == 500, "500 bench lines")
+    check(len(a.ev("ArtPad.bench.frames")) == 3, "200 per frame -> 3 frames")
+    a.ex("ArtPad.OnSlashCommand('bench more 100')")
+    check(len(a.ev("ArtPad.bench.regions")) == 600, "more adds to the grid")
+    a.ex("ArtPad.OnSlashCommand('bench tex 50')")
+    check(len(a.ev("ArtPad.bench.regions")) == 50, "a new run replaces the old one")
+    a.ex("ArtPad.OnSlashCommand('bench nolimit')")
+    check(a.ev("ArtPad.lineCap") == float("inf"), "nolimit lifts the cap")
+    a.ex("ArtPad.OnSlashCommand('bench scribble 400')")
+    check(a.ev("ArtPad.linesInUse") > 400, "scribble goes through the stroke renderer")
+    a.ex("ArtPad.OnSlashCommand('bench nolimit')")
+    check(a.ev("ArtPad.lineCap") == a.ev("ArtPad.LINE_CAP"), "and toggles back")
+    w.pump(3)
+    check(a.items() == 0 and b.items() == 0, "nothing becomes a canvas item or reaches anyone")
+    a.ex("ArtPad.OnSlashCommand('bench clear')")
+    check(a.ev("ArtPad.linesInUse") == 0, "clear releases the scribble's lines")
+
+
+def test_own_echo_when_name_was_unknown_at_load():
+    # The client can report "Unknown" for your name while addons load. Own messages echoed
+    # back by the server must still be recognised as yours once the real name is known.
+    w = World()
+    a, b = w.add("Alice"), w.add("Bob")
+    settle(w)
+    a.ex('ArtPad.playerName = "Unknown"; ArtPad.learnedName = nil; ArtPad_Settings.FullNames = {}')
+    a.stroke([(100, 100), (200, 200), (300, 100)])
+    w.pump(3)
+    check(a.ev("ArtPad.playerName") == "Alice", "real name picked up again")
+    check(a.ev("ArtPad.nameTags.Alice") is None, "no name tag for yourself")
+    check(a.ev("ArtPad:IsSelf('Alice-Realm')"), "own messages recognised")
+
+
+def test_forever_surnames():
+    # WoW Forever: UnitName("player") is "Corgi" but others see (and the server sends) the
+    # full "Corgi Pembroke"; another player can be "Corgi Smith".
+    w = World()
+    a = w.add("Corgi Pembroke", unit_name="Corgi")
+    b = w.add("Corgi Smith", unit_name="Corgi")
+    settle(w)
+    check(a.ev("ArtPad.playerName") == "Corgi Pembroke", f"learned own full name ({a.ev('ArtPad.playerName')})")
+    check(b.ev("ArtPad.playerName") == "Corgi Smith", "the other Corgi too")
+    a.stroke(line(100, 100, 400, 400))
+    w.pump(3)
+    check(b.items() == 1 and a.items() == 1, "the other Corgi gets the stroke")
+    check(a.ev("ArtPad.nameTags['Corgi Pembroke']") is None, "no name tag for yourself")
+    check(b.ev("ArtPad.nameTags['Corgi Pembroke']") is not None, "the other Corgi sees who drew it")
+    check(a.ev("ArtPad.items[1].id") == b.ev("ArtPad.items[1].id"), "same item id on both sides")
+    a.ex("ArtPad:Undo()")
+    w.pump(3)
+    check(a.items() == 0 and b.items() == 0, "undo reaches the other Corgi")
+    # Drawn before the name was learned: renamed, and remembered for next time
+    c = w.add("Pip Pembroke", unit_name="Pip", login=False)
+    c.login()
+    c.stroke(line(10, 10, 50, 50))
+    settle(w)
+    check(c.ev("ArtPad.items[1].author") == "Pip Pembroke", "early strokes re-keyed to the full name")
+    guid = c.ev('UnitGUID("player")')
+    check(c.ev(f'ArtPad_Settings.FullNames["{guid}"]') == "Pip Pembroke", "full name remembered")
+
+
+def test_hide_button():
+    w = World()
+    a = w.add("Alice")
+    a.ex("ArtPad.window:Show(); CLICK(ArtPad_CloseButton)")
+    check(not a.ev("ArtPad.window:IsShown()"), "the - button hides the window")
+    check(a.ev("ArtPad_MiniBar") is None and a.ev("ArtPad_MinimiseButton") is None, "no mini bar or separate close button")
+
+
+def test_presence_initials():
+    w = World()
+    a = w.add("Alice")
+    others = [w.add(n) for n in ("Bob", "Cat", "Dan", "Eve", "Fay")]
+    settle(w)
+    a.ex("ArtPad.window:Show()")
+    for k, o in enumerate(others):
+        o.stroke(line(0, k * 50, 100, k * 50))
+    w.pump(2)
+    a.ex("ArtPad:RefreshStatus()")
+    shown = [a.ev(f"ArtPad.presenceBadges[{i}]:IsShown() and ArtPad.presenceBadges[{i}].text._text or nil") for i in range(1, 5)]
+    check(shown == ["Bo", "Ca", "Da", "+2"], f"three initials and a count: {shown}")
 
 
 # ---------------------------------------------------------------- runner

@@ -1,9 +1,9 @@
 <Bindings>
 	<Binding name="ARTPAD_SHOW" header="ARTPAD">
-		if ArtPad and ArtPad.mainFrame then ArtPad.mainFrame:Show() end
+		if ArtPad and ArtPad.window then ArtPad.window:Show() end
 	</Binding>
 	<Binding name="ARTPAD_HIDE">
-		if ArtPad and ArtPad.mainFrame then ArtPad.mainFrame:Hide() end
+		if ArtPad and ArtPad.window then ArtPad.window:Hide() end
 	</Binding>
 	<Binding name="ARTPAD_TOGGLE">
 		if ArtPad then ArtPad:Toggle() end

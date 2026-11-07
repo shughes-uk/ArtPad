@@ -76,11 +76,21 @@ function methods:GetScale() return self._scale end
 function methods:GetEffectiveScale() return self._scale end
 function methods:SetAlpha(a) self._alpha = a end
 function methods:GetAlpha() return self._alpha end
+function methods:GetEffectiveAlpha()
+	local a, f = 1, self
+	while f do
+		a = a * (rawget(f, "_alpha") or 1)
+		f = rawget(f, "_parent")
+	end
+	return a
+end
 function methods:SetPoint(...)
 	local args = { ... }
 	-- Track BOTTOMLEFT anchors with numeric offsets so GetLeft/GetBottom are meaningful.
 	if args[1] == "BOTTOMLEFT" and type(args[2]) == "number" then
 		self._left, self._bottom = args[2], args[3]
+	elseif args[1] == "BOTTOMLEFT" and args[3] == "BOTTOMLEFT" and type(args[4]) == "number" then
+		self._left, self._bottom = args[4], args[5] -- relative to a parent at the origin
 	end
 	self._point = args
 end
@@ -102,7 +112,8 @@ function methods:GetStringWidth() return 8 * #(self._text or "") end
 function methods:GetStringHeight() return 14 end
 function methods:SetFrameStrata(s) self._strata = s end
 function methods:GetFrameStrata() return self._strata or "MEDIUM" end
-function methods:GetFrameLevel() return 1 end
+function methods:GetFrameLevel() return self._level or 1 end
+function methods:SetFrameLevel(n) self._level = n end
 function methods:SetText(t)
 	-- Real WoW errors here, and the error aborts whatever was running.
 	if self._kind == "FontString" and not self._hasFont then error("FontString:SetText(): Font not set", 2) end
@@ -230,13 +241,14 @@ end
 
 -- [[ Unit / social ]]
 REALM = "TestRealm"
-function UnitName(unit) if unit == "player" then return CLIENT.name end end
+function UnitName(unit) if unit == "player" then return CLIENT.unitName or CLIENT.name end end
+function UnitGUID(unit) if unit == "player" then return "Player-1-" .. CLIENT.name end end
 function GetRealmName() return REALM end
 function GetNormalizedRealmName() return REALM end
 function Ambiguate(name, _) return (name:gsub("%-.*$", "")) end
 function UnitIsUnit() return false end
 function IsInGuild() return CLIENT.guild end
-function GetNumGuildMembers() return #CLIENT.guildRoster end
+function GetNumGuildMembers() return #CLIENT.guildRoster, #CLIENT.guildRoster end
 function GetGuildRosterInfo(i)
 	local m = CLIENT.guildRoster[i]
 	if m then return m.name .. "-" .. REALM, "Rank" .. m.rank, m.rank end
@@ -254,6 +266,12 @@ C_Map = {
 	GetMapInfo = function(id) return { name = "Map" .. id } end,
 }
 MAP_ID = 85
+-- What this client has explored: a 300x200 area (2 tiles wide, 1 tall) plus a hover-only highlight
+EXPLORED = {
+	{ textureWidth = 300, textureHeight = 200, offsetX = 100, offsetY = 50, isShownByMouseOver = false, fileDataIDs = { 501, 502 } },
+	{ textureWidth = 128, textureHeight = 128, offsetX = 0, offsetY = 0, isShownByMouseOver = true, fileDataIDs = { 599 } },
+}
+C_MapExplorationInfo = { GetExploredMapTextures = function() return EXPLORED end }
 LE_PARTY_CATEGORY_INSTANCE = 2
 function IsInGroup(cat) if cat == LE_PARTY_CATEGORY_INSTANCE then return false end return CLIENT.group ~= nil end
 function IsInRaid() return CLIENT.group == "raid" end

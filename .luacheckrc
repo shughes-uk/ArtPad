@@ -35,9 +35,9 @@ read_globals = {
 	"Settings", "InterfaceOptions_AddCategory", "InterfaceOptionsFrame_OpenToCategory",
 	"InCombatLockdown", "IsShiftKeyDown", "GetCursorPosition", "GetTime", "time",
 	"SetOverrideBindingClick", "ClearOverrideBindings",
-	"UnitName", "Ambiguate",
+	"UnitName", "UnitGUID", "Ambiguate", "UNKNOWNOBJECT",
 	"IsInGuild", "GetNumGuildMembers", "GetGuildRosterInfo", "GuildControlGetRankName",
 	"IsInGroup", "IsInRaid", "GetNumGroupMembers", "GetRaidRosterInfo", "LE_PARTY_CATEGORY_INSTANCE",
 	"CopyTable", "wipe", "tinsert", "strtrim",
-	"GetScreenWidth", "GetScreenHeight", "C_Map", "UnitClass", "RAID_CLASS_COLORS",
+	"GetScreenWidth", "GetScreenHeight", "C_Map", "C_MapExplorationInfo", "UnitClass", "RAID_CLASS_COLORS",
 }

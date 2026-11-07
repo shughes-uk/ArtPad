@@ -134,6 +134,7 @@ function ArtPad:SetupComm()
 	self.versionPrefix = "ArtPad_Version"
 	self.syncBuffer = {}
 	self.outQueue = {}
+	self.laserLast = {}
 	self:RegisterComm(self.livePrefix, "OnLiveMessage")
 	self:RegisterComm(self.syncPrefix, "OnSyncMessage")
 	self:RegisterComm(self.versionPrefix, "OnVersionMessage")
@@ -346,11 +347,16 @@ function ArtPad:NextCommand(entry, room, packetEmpty)
 		if #parts == 0 then return nil, done end
 		return "R(" .. table.concat(parts, ";") .. ")", done
 	end
-	local s = entry.stroke
+	local s = entry.stroke or entry.laser
 	if s.sent >= s.n then
 		return nil, s.done -- caught up; more may come while it's still being drawn
 	end
-	local head = ("S(%s,%d,%s,%d,%d;"):format(s.localId, s.sent + 1, self.ColorString(s), s.w, s.smooth and 1 or 0)
+	local head
+	if entry.laser then
+		head = ("L(%s,%d;"):format(s.localId, s.sent + 1)
+	else
+		head = ("S(%s,%d,%s,%d,%d;"):format(s.localId, s.sent + 1, self.ColorString(s), s.w, s.smooth and 1 or 0)
+	end
 	local space = room - #head - 1
 	if space < 12 and not packetEmpty then return nil, false end
 	local data, last = self.EncodePoints(s.px, s.py, s.sent + 1, s.n, math.max(space, 12))
@@ -365,7 +371,7 @@ function ArtPad:FlushOutbox()
 	end
 	local q = self.outQueue
 	while q[1] and self:SendBudget() >= 1 do
-		local parts, len = {}, 0
+		local parts, len = {}, ArtPad_Settings.ShowMyName and 0 or 4 -- room for the "H()" marker
 		while q[1] do
 			local sep = #parts > 0 and 1 or 0
 			local cmd, finished = self:NextCommand(q[1], MAX_MESSAGE - len - sep, #parts == 0)
@@ -380,6 +386,8 @@ function ArtPad:FlushOutbox()
 			end
 		end
 		if #parts == 0 then break end
+		-- "Show my name" off: tell receivers not to tag these with our name
+		if not ArtPad_Settings.ShowMyName then table.insert(parts, 1, "H()") end
 		self:SendLive(table.concat(parts, "\n"))
 	end
 	if q[1] then
@@ -397,7 +405,7 @@ function ArtPad:BeginStroke(x, y, smooth)
 	local c = self.brushColor
 	local s = {
 		localId = self:NewLocalId(),
-		r = c.r, g = c.g, b = c.b, a = c.a, w = ArtPad_Settings.BrushSize, smooth = smooth,
+		r = c.r, g = c.g, b = c.b, a = c.a, w = self:BrushWidth(), smooth = smooth,
 		px = { x }, py = { y }, n = 1, sent = 0,
 		pending = {}, -- simplified-away points since the last committed one (x1, y1, x2, y2, ...)
 	}
@@ -512,12 +520,14 @@ function ArtPad:PlaceStamp(key, x, y)
 	self:QueueCommand(("M(%s,%s,%d,%d,%d)"):format(localId, key, x, y, size))
 end
 
--- Share a backdrop map with everyone (nil/0 removes it).
-function ArtPad:ShareBackdrop(mapID)
+-- Share a backdrop map (with your explored overlays) with everyone; nil removes it.
+function ArtPad:ShareBackdrop(mapID, overlays)
+	overlays = mapID and overlays or ""
 	if not self.loopback then
-		self:SetBackdrop(mapID)
+		self.backdropBy = mapID and "you" or nil
+		self:SetBackdrop(mapID, overlays)
 	end
-	self:QueueCommand("B(" .. (mapID or 0) .. ")")
+	self:QueueCommand("B(" .. (mapID or 0) .. (overlays ~= "" and (";" .. overlays) or "") .. ")")
 end
 
 function ArtPad:EraseAt(x1, y1, x2, y2)
@@ -553,11 +563,12 @@ function ArtPad:PlaceText(x, y, text)
 	local localId = self:NewLocalId()
 	local c = self.brushColor
 	local id = self.playerName .. ":" .. localId
+	local size = math.floor(14 * self:CanvasPerPixel() + 0.5)
 	if not self.loopback then
-		self:AddText(id, self.playerName, x, y, text, c)
+		self:AddText(id, self.playerName, x, y, text, c, size)
 	end
 	self:PushUndo(id)
-	self:QueueCommand(("T(%s,%d,%d,%s;%s)"):format(localId, x, y, self.ColorString(c), text))
+	self:QueueCommand(("T(%s,%d,%d,%s,%d;%s)"):format(localId, x, y, self.ColorString(c), size, text))
 end
 
 function ArtPad:ClearForEveryone()
@@ -573,23 +584,28 @@ end
 --[[ Receiving ]]
 
 local STROKE_HEADER = "^([^,]+),(%d+)," .. NUM .. "," .. NUM .. "," .. NUM .. "," .. NUM .. "," .. NUM .. ",([01])$"
-local TEXT_PATTERN = "^([^,]+)," .. NUM .. "," .. NUM .. "," .. NUM .. "," .. NUM .. "," .. NUM .. "," .. NUM .. ";(.*)$"
+local TEXT_PATTERN = "^([^,]+)," .. NUM .. "," .. NUM .. "," .. NUM .. "," .. NUM .. "," .. NUM .. "," .. NUM .. "," .. NUM .. ";(.*)$"
 local STAMP_PATTERN = "^([^,]+),(%w+),(%-?%d+),(%-?%d+),(%d+)$"
 
 -- A live message can carry several commands, one per line, applied in order.
 function ArtPad:ApplyLivePacket(msg, author, isReplay)
+	local anonymous = false
 	for cmd in msg:gmatch("[^\n]+") do
-		self:ApplyLive(cmd, author, isReplay)
+		if cmd == "H()" then
+			anonymous = true -- the sender doesn't want their name shown
+		else
+			self:ApplyLive(cmd, author, isReplay, anonymous)
+		end
 	end
 end
 
 -- Apply one live command from `author` (a short name). isReplay = re-applied after a sync.
-function ArtPad:ApplyLive(msg, author, isReplay)
+function ArtPad:ApplyLive(msg, author, isReplay, anonymous)
 	local kind, body = msg:match("^(%a)%((.*)%)$")
 	if not kind then return end
 	local fromOther = author ~= self.playerName and not isReplay
-	-- In loopback everything is "ours", so tag our own strokes to make name tags testable solo.
-	local showTag = fromOther or (self.loopback and not isReplay)
+	-- Name tags and "is drawing" are only ever shown for other people, never yourself.
+	local showTag = fromOther and not anonymous
 
 	if kind == "S" then
 		local head, pts = body:match("^([^;]*);(.*)$")
@@ -636,10 +652,10 @@ function ArtPad:ApplyLive(msg, author, isReplay)
 		end
 		self:ApplyErase(hits)
 	elseif kind == "T" then
-		local lid, x, y, r, g, b, a, text = body:match(TEXT_PATTERN)
+		local lid, x, y, r, g, b, a, size, text = body:match(TEXT_PATTERN)
 		if lid and text ~= "" then
 			self:AddText(author .. ":" .. lid, author, tonumber(x), tonumber(y), text,
-				{ r = tonumber(r), g = tonumber(g), b = tonumber(b), a = tonumber(a) })
+				{ r = tonumber(r), g = tonumber(g), b = tonumber(b), a = tonumber(a) }, size)
 			if showTag then
 				self:ShowNameTag(author, tonumber(x), tonumber(y))
 				self:MarkActive(author)
@@ -658,13 +674,31 @@ function ArtPad:ApplyLive(msg, author, isReplay)
 			end
 		end
 	elseif kind == "B" then
-		local mapID = tonumber(body)
+		local id, overlays = body:match("^(%d+);?(.*)$")
+		local mapID = tonumber(id)
 		if mapID then
-			self:SetBackdrop(mapID ~= 0 and mapID or nil)
+			self.backdropBy = mapID ~= 0 and (anonymous and "someone" or author) or nil
+			self:SetBackdrop(mapID ~= 0 and mapID or nil, overlays)
 			if fromOther then
 				self:Notify(mapID ~= 0 and (author .. " put up a map.") or (author .. " took the map down."), "info", { quiet = true })
 			end
 		end
+	elseif kind == "L" then
+		if isReplay then return end -- lasers are momentary
+		local lid, start, pts = body:match("^([^,]+),(%d+);(.*)$")
+		local xs, ys
+		if pts then xs, ys = self.DecodePoints(pts) end
+		if not xs or #xs == 0 then return end
+		start = tonumber(start)
+		local last = self.laserLast[author]
+		local px, py
+		if last and last.lid == lid and last.n == start - 1 then px, py = last.x, last.y end
+		for k = 1, #xs do
+			if px then self:DrawLaserSegment(px, py, xs[k], ys[k]) end
+			px, py = xs[k], ys[k]
+		end
+		self.laserLast[author] = { lid = lid, n = start + #xs - 1, x = px, y = py }
+		if showTag then self:ShowNameTag(author, px, py) end
 	elseif kind == "U" then
 		-- The id is built from the sender's name, so people can only undo their own items.
 		self:RemoveItem(author .. ":" .. body)
@@ -678,9 +712,10 @@ end
 
 function ArtPad:OnLiveMessage(prefix, msg, disType, sender)
 	local author = ShortName(sender)
+	local me = self:RefreshPlayerName()
 	if self.loopback then
-		if disType ~= "WHISPER" or author ~= self.playerName then return end
-	elseif author == self.playerName or not self:AcceptsDistribution(disType) or not self:ValidateSender(sender) then
+		if disType ~= "WHISPER" or author ~= me then return end
+	elseif author == me or not self:AcceptsDistribution(disType) or not self:ValidateSender(sender) then
 		return
 	end
 	if self.syncing then
@@ -764,6 +799,7 @@ function ArtPad:RequestSnapshot(nonce)
 	self.syncSource = best.sender
 	self.syncPhase = "downloading"
 	self.syncProgress = 0
+	self.syncDownloadStarted = GetTime()
 	self.syncChunks = nil
 	self:RequestRefresh()
 	self:Debug(("sync: requesting %d items (%d bytes) from %s"):format(best.count, best.bytes, best.sender))
@@ -826,8 +862,13 @@ function ArtPad:FinishSync(snapshot, from, failedFrom)
 end
 
 function ArtPad:OnSyncMessage(prefix, msg, disType, sender)
-	if self:IsSelf(sender) then return end
 	local kind, arg = msg:match("^(%a)%(([^)]*)%)")
+	-- Our own canvas request coming back tells us the name others see us by.
+	if kind == "Q" and self.syncNonce and arg == self.syncNonce then
+		self:LearnOwnName(sender)
+		return
+	end
+	if self:IsSelf(sender) then return end
 	if not kind then return end
 
 	if kind == "Q" then

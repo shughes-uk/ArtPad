@@ -1,9 +1,9 @@
 ## Interface: 16001, 120105
 ## Title: ArtPad
 ## Notes: Shared canvas for your guild or group
-## Version: 10.0
+## Version: 10.1
 ## X-SaveVersion: 3
-## X-ProtocolVersion: 4
+## X-ProtocolVersion: 5
 ## Author: Dust, Turalyon-EU & Catmancer, Moonguard US
 ## IconTexture: Interface\AddOns\ArtPad\icon
 ## Category: Miscellaneous
@@ -27,3 +27,4 @@ Tools.lua
 Map.lua
 Feedback.lua
 Options.lua
+Debug.lua

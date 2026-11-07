@@ -110,6 +110,9 @@ function ArtPad:SetupOptions()
 	Place(CreateCheck(panel, "Show the names of people drawing", nil,
 		function() return ArtPad_Settings.NameTags end,
 		function(v) ArtPad_Settings.NameTags = v end))
+	Place(CreateCheck(panel, "Show my name to others when I draw", nil,
+		function() return ArtPad_Settings.ShowMyName end,
+		function(v) ArtPad_Settings.ShowMyName = v end))
 	Place(CreateCheck(panel, "Ask before clearing the canvas for everyone", nil,
 		function() return ArtPad_Settings.WarnClear end,
 		function(v) ArtPad_Settings.WarnClear = v end))
@@ -134,7 +137,7 @@ function ArtPad:SetupOptions()
 		self:ResetPosition()
 	end)
 	recenter:SetPoint("LEFT", resync, "RIGHT", 8, 0)
-	local resetui = CreateButton(panel, "Reset toolbar positions", 180, function()
+	local resetui = CreateButton(panel, "Reset window", 180, function()
 		self:ResetAllFramePositions()
 	end)
 	resetui:SetPoint("LEFT", recenter, "RIGHT", 8, 0)
@@ -154,6 +157,7 @@ function ArtPad:RefreshOptions()
 	for _, widget in ipairs(widgets) do
 		widget.Refresh()
 	end
+	for _, s in ipairs(self.shareSwitches or {}) do s:Refresh() end
 end
 
 function ArtPad:OpenOptions()
