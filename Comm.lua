@@ -152,7 +152,9 @@ end
 
 -- Channel we broadcast on for the current mode, or nil if there's nobody to talk to.
 function ArtPad:GetChannel()
-	if self.node then return "YELL" end -- at a place (Nodes.lua)
+	if ArtPad_Settings.Mode == "LOCAL" then
+		return self.node and "YELL" or nil -- only shared at a place (Nodes.lua)
+	end
 	if ArtPad_Settings.Mode == "GUILD" then
 		return IsInGuild() and "GUILD" or nil
 	end
@@ -166,7 +168,7 @@ function ArtPad:GetChannel()
 end
 
 function ArtPad:AcceptsDistribution(disType)
-	if self.node then return disType == "YELL" end
+	if ArtPad_Settings.Mode == "LOCAL" then return self.node ~= nil and disType == "YELL" end
 	if ArtPad_Settings.Mode == "GUILD" then
 		return disType == "GUILD"
 	end

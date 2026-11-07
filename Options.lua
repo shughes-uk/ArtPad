@@ -70,6 +70,9 @@ function ArtPad:SetupOptions()
 	Place(CreateCheck(panel, "My party / raid", "Includes instance groups.",
 		function() return ArtPad_Settings.Mode == "RAID" end,
 		function() self:SetMode("RAID") end), 8)
+	Place(CreateCheck(panel, "Whoever's at the same place (local)", "For now: the Lion's Pride Inn in Goldshire.",
+		function() return ArtPad_Settings.Mode == "LOCAL" end,
+		function() self:SetMode("LOCAL") end), 8)
 
 	y = y - 10
 	Place(CreateCheck(panel, "Only show drawings from leaders and officers",
@@ -113,9 +116,6 @@ function ArtPad:SetupOptions()
 	Place(CreateCheck(panel, "Show my name to others when I draw", nil,
 		function() return ArtPad_Settings.ShowMyName end,
 		function(v) ArtPad_Settings.ShowMyName = v end))
-	Place(CreateCheck(panel, "Join the shared canvas at places like the Lion's Pride Inn", nil,
-		function() return ArtPad_Settings.Nearby end,
-		function(v) self:SetNearby(v) end))
 	Place(CreateCheck(panel, "Ask before clearing the canvas for everyone", nil,
 		function() return ArtPad_Settings.WarnClear end,
 		function(v) ArtPad_Settings.WarnClear = v end))

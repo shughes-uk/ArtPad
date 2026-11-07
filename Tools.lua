@@ -693,7 +693,7 @@ function ArtPad:SetupSharing()
 
 	-- the popover
 	local pop = CreateFrame("Frame", "ArtPad_SharingPopover", self.window)
-	pop:SetSize(260, 218)
+	pop:SetSize(260, 264)
 	pop:SetPoint("BOTTOMLEFT", pill, "TOPLEFT", 0, 8)
 	pop:SetFrameLevel(self.window:GetFrameLevel() + 40)
 	pop:EnableMouse(true)
@@ -730,9 +730,10 @@ function ArtPad:SetupSharing()
 	end
 	self.shareGuild = Option("ArtPad_ShareGuild", "GUILD", "Guild", -10)
 	self.shareGroup = Option("ArtPad_ShareGroup", "RAID", "Party / raid", -56)
+	self.shareLocal = Option("ArtPad_ShareLocal", "LOCAL", "Local", -102)
 	local d = self.Divider(pop, true)
-	d:SetPoint("TOPLEFT", 14, -108)
-	d:SetPoint("TOPRIGHT", -14, -108)
+	d:SetPoint("TOPLEFT", 14, -154)
+	d:SetPoint("TOPRIGHT", -14, -154)
 	self.shareSwitches = {}
 	local function Toggle(name, label, key, y)
 		local fs = pop:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -748,9 +749,9 @@ function ArtPad:SetupSharing()
 		s:SetPoint("TOPRIGHT", -16, y)
 		table.insert(self.shareSwitches, s)
 	end
-	Toggle("ArtPad_ToggleAdmin", "Leaders only", "AdminOnly", -122)
-	Toggle("ArtPad_ToggleNames", "Name tags", "NameTags", -154)
-	Toggle("ArtPad_ToggleMyName", "Show my name", "ShowMyName", -186)
+	Toggle("ArtPad_ToggleAdmin", "Leaders only", "AdminOnly", -168)
+	Toggle("ArtPad_ToggleNames", "Name tags", "NameTags", -200)
+	Toggle("ArtPad_ToggleMyName", "Show my name", "ShowMyName", -232)
 	pop:Hide()
 	self.sharingPopover = pop
 	self:RegisterPopover(pop)
@@ -761,7 +762,8 @@ function ArtPad:RefreshSharingPopover()
 	self.shareGuild.sub:SetText(IsInGuild() and ((online or 0) .. " online") or "Not in a guild")
 	local n = GetNumGroupMembers()
 	self.shareGroup.sub:SetText(n > 0 and (n .. " in group") or "Not in a group")
-	for _, b in ipairs({ self.shareGuild, self.shareGroup }) do
+	self.shareLocal.sub:SetText(self.node and ("At " .. self.node.name) or "Whoever's at the same inn")
+	for _, b in ipairs({ self.shareGuild, self.shareGroup, self.shareLocal }) do
 		local on = ArtPad_Settings.Mode == b.mode
 		if on then
 			self.Fill(b.bg, C.accent, 0.16)

@@ -9,6 +9,7 @@ Usage:
   /ap options    settings (also Options > AddOns > ArtPad)
   /ap guild      share with your guild (default)
   /ap raid       share with your party / raid / instance group
+  /ap local      share with whoever is at the same place (for now: the Lion's Pride Inn)
   /ap resync     re-download the canvas from others
   /ap loopback   test sync on your own: your drawing round-trips through the server
   /ap resetui    put the window back to its default size and spot
@@ -19,10 +20,10 @@ the title bar shows who you're sharing with; click it to switch or to hide your 
 People who log in, join your group or switch mode receive the existing canvas from
 whoever has the most complete copy.
 
-Places: at the Lion's Pride Inn (Goldshire) ArtPad switches to the inn's own canvas, shared
-with everyone there who runs ArtPad, with the map of the area behind it. Walk away and your
-guild/group canvas comes back. The inn's drawing is kept, so it's still there next visit.
-Turn it off in the options or with /ap nearby off.
+Local mode: share with whoever is at the same place instead of your guild or group. For now
+the one place is the Lion's Pride Inn in Goldshire: there you get the inn's canvas, shared with
+everyone there in Local mode, with the map of the area behind it. Elsewhere a local canvas
+isn't shared. The inn's drawing is kept, so it's still there next visit.
 
 Development:
   Link the repo folder into the game (no admin needed), then /reload after editing:

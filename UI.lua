@@ -601,6 +601,11 @@ end
 
 function ArtPad:AudienceCount()
 	if self.loopback then return 1 end
+	if ArtPad_Settings.Mode == "LOCAL" then
+		local n = 1
+		for _ in pairs(self.activeArtists or {}) do n = n + 1 end
+		return self.node and n or 1
+	end
 	if ArtPad_Settings.Mode == "GUILD" then
 		local _, online = GetNumGuildMembers()
 		return online

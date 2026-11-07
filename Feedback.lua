@@ -123,8 +123,11 @@ function ArtPad:GetSharingState()
 	if self.loopback then
 		return "Loopback test", "test", "Only you, through the server."
 	end
-	if self.node then
-		return self.node.name, "ok", "Everyone here with ArtPad sees what you draw."
+	if ArtPad_Settings.Mode == "LOCAL" then
+		if self.node then
+			return self.node.name, "ok", "Everyone here with ArtPad sees what you draw."
+		end
+		return "Local", "warn", "Not shared here. Go to the Lion's Pride Inn in Goldshire to draw with whoever's there."
 	end
 	if ArtPad_Settings.Mode == "GUILD" then
 		if IsInGuild() then

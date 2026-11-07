@@ -31,12 +31,11 @@ ArtPad.DEBUG = false
 
 local defaults = {
 	SaveVersion = ArtPad.saveVersion,
-	Mode = "GUILD", -- "GUILD" or "RAID" (party/raid/instance group)
+	Mode = "GUILD", -- "GUILD", "RAID" (party/raid/instance group) or "LOCAL" (places, Nodes.lua)
 	AdminOnly = false, -- only accept drawings from leaders/assists (group) or officers (guild)
 	AdminGuildRank = 1, -- guild rank index counted as officer (0 = guild master)
 	WarnClear = true, -- confirm before clearing the canvas for everyone
 	FullNames = {}, -- character GUID -> name as others see it (WoW Forever adds a surname)
-	Nearby = true, -- switch to a place's canvas when you're there (Nodes.lua)
 	PlaceCanvases = {}, -- place id -> saved canvas
 	NameTags = true, -- show who is drawing
 	ShowMyName = true, -- let others see my name on what I draw
@@ -208,24 +207,30 @@ function events:PLAYER_GUILD_UPDATE() self:RequestRefresh() end
 
 --[[ Modes ]]
 
+local MODE_MESSAGES = {
+	GUILD = "Now sharing with your guild.",
+	RAID = "Now sharing with your party / raid.",
+	LOCAL = "Local: you share with whoever is at the same place, like the Lion's Pride Inn.",
+}
+
 function ArtPad:SetMode(mode)
-	if ArtPad_Settings.Mode == mode then return end
+	if ArtPad_Settings.Mode == mode or not MODE_MESSAGES[mode] then return end
+	if self.node then self:LeavePlace(true) end -- keeps the place's drawing
 	ArtPad_Settings.Mode = mode
-	if self.node then
-		-- At a place: the new audience takes over when you leave it.
-		self.outsideCanvas = nil
-		self:Notify(mode == "GUILD" and "You'll share with your guild after leaving here."
-			or "You'll share with your party / raid after leaving here.", "info")
-		self:RefreshOptions()
-		return
-	end
-	self:Notify(mode == "GUILD" and "Now sharing with your guild." or "Now sharing with your party / raid.", "success")
+	self:Notify(MODE_MESSAGES[mode], "success")
 	self:RequestRefresh()
 	-- A different audience means a different shared canvas.
 	self:ClearAll()
-	self:StartSync("mode change")
+	if mode == "LOCAL" then
+		self:CheckPlaces() -- joins the place you're at, if any
+	else
+		self:StartSync("mode change")
+	end
 	self:RefreshOptions()
 end
+
+local NEXT_MODE = { GUILD = "RAID", RAID = "LOCAL", LOCAL = "GUILD" }
+local MODE_NAMES = { GUILD = "guild", RAID = "party/raid", LOCAL = "local (places)" }
 
 --[[ Minimap button / addon compartment ]]
 
@@ -244,7 +249,7 @@ end
 function ArtPad.MiniMapClick(_, button)
 	local self = ArtPad
 	if button == "RightButton" then
-		self:SetMode(ArtPad_Settings.Mode == "GUILD" and "RAID" or "GUILD")
+		self:SetMode(NEXT_MODE[ArtPad_Settings.Mode] or "GUILD")
 	elseif button == "MiddleButton" then
 		self:OpenOptions()
 	elseif not InCombatLockdown() then
@@ -267,9 +272,9 @@ function ArtPad:SetupLauncher()
 		OnTooltipShow = function(tt)
 			tt:AddLine("ArtPad")
 			tt:AddLine("|cffffff00Left Click|r to toggle the canvas")
-			tt:AddLine("|cffffff00Right Click|r to switch between guild and party/raid")
+			tt:AddLine("|cffffff00Right Click|r to switch: guild, party/raid, local")
 			tt:AddLine("|cffffff00Middle Click|r for options")
-			tt:AddLine("Sharing with: " .. (ArtPad_Settings.Mode == "GUILD" and "guild" or "party/raid"), 1, 1, 1)
+			tt:AddLine("Sharing with: " .. (MODE_NAMES[ArtPad_Settings.Mode] or "?"), 1, 1, 1)
 		end,
 	})
 	local LDBIcon = LibStub("LibDBIcon-1.0", true)
@@ -305,6 +310,7 @@ ArtPad.slashCommands = {
 	undo = function(self) self:Undo() end,
 	guild = function(self) self:SetMode("GUILD") end,
 	raid = function(self) self:SetMode("RAID") end,
+	["local"] = function(self) self:SetMode("LOCAL") end,
 	resync = function(self)
 		self:ClearAll()
 		self:StartSync("manual")
@@ -317,10 +323,6 @@ ArtPad.slashCommands = {
 	fit = function(self) self:ResetPosition() end,
 	stats = function(self) self:PrintStats() end,
 	node = function(self) self:PrintPlaces() end, -- hidden: distances to places
-	nearby = function(self, arg)
-		self:SetNearby(OnOff(arg, not ArtPad_Settings.Nearby))
-		self:Message("canvases at places like inns: " .. (ArtPad_Settings.Nearby and "on" or "off"))
-	end,
 	bench = function(self, arg) self:BenchCommand(arg) end, -- hidden: Debug.lua
 	size = function(self, arg)
 		local n = tonumber(arg)
@@ -381,7 +383,7 @@ function ArtPad.OnSlashCommand(msg)
 	else
 		self:Message("commands:")
 		self:Message("/ap [show | hide | toggle]  /ap options")
-		self:Message("/ap guild | raid  - who shares your canvas")
+		self:Message("/ap guild | raid | local  - who shares your canvas (local: places like inns)")
 		self:Message("/ap undo  (or Ctrl-Z)   /ap size <n>  - brush size")
 		self:Message("/ap resync  - re-download the canvas   /ap clear  - clear locally")
 		self:Message("/ap map  - show/hide the map of where you are   /ap fit  - fit canvas to screen")

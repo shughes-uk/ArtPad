@@ -1,8 +1,9 @@
 --[[
 	Places: canvases tied to a spot in the world, shared with whoever is standing there.
 
-	A place is a point on a zone map plus a radius. Walk inside it and ArtPad switches from
-	your guild/group canvas to the place's canvas; walk out and it switches back. Drawing at a
+	The "Local" sharing mode (next to Guild and Party/Raid). A place is a point on a zone map
+	plus a radius. In Local mode, walk inside one and you get that place's canvas; walk out
+	and your canvas isn't shared until you reach another place. Drawing at a
 	place goes out on YELL, which reaches about 400 yards, so with a radius of at most 200
 	everyone at the place hears everyone else directly. Joining a place asks the people there
 	for its canvas (by whisper, like any sync), and each client keeps its own copy of every
@@ -78,8 +79,8 @@ end
 
 function ArtPad:CheckPlaces()
 	local current = self.node
-	if not ArtPad_Settings.Nearby or self.loopback then
-		if current then self:LeavePlace() end
+	if ArtPad_Settings.Mode ~= "LOCAL" or self.loopback then
+		if current then self:LeavePlace(true) end
 		return
 	end
 	if current then
@@ -115,7 +116,6 @@ end
 
 function ArtPad:EnterPlace(place, mapID)
 	self:SwitchScope()
-	self.outsideCanvas = self:SerializeCanvas() -- your guild/group canvas, back when you leave
 	self.node = place
 	self:ClearCanvas()
 	self.backdropBy = nil
@@ -130,29 +130,17 @@ function ArtPad:EnterPlace(place, mapID)
 	self:RequestRefresh()
 end
 
-function ArtPad:LeavePlace()
+-- quiet: switching modes (the mode change says what happened)
+function ArtPad:LeavePlace(quiet)
 	local place = self.node
 	if not place then return end
 	self:SavePlaceCanvas()
 	self:SwitchScope()
 	self.node = nil
 	self:ClearAll()
-	local outside = self.outsideCanvas
-	self.outsideCanvas = nil
-	if outside then
-		local ok, err = pcall(self.LoadCanvas, self, outside)
-		if not ok then self:Debug("place: couldn't restore canvas: " .. tostring(err)) end
+	if not quiet then
+		self:Notify(("Left %s. Its drawing is kept for next time."):format(place.name), "info", { quiet = true })
 	end
-	local label = self:GetSharingState()
-	self:Notify(("Left %s. Back to your canvas (%s)."):format(place.name, label), "info", { quiet = true })
-	self:StartSync("left " .. place.id)
-	self:RequestRefresh()
-end
-
-function ArtPad:SetNearby(on)
-	ArtPad_Settings.Nearby = on and true or false
-	self:CheckPlaces()
-	if self.RefreshOptions then self:RefreshOptions() end
 	self:RequestRefresh()
 end
 
