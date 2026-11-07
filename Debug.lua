@@ -108,10 +108,6 @@ function ArtPad:BenchClear(quiet)
 end
 
 function ArtPad:BenchReport()
-	local frames = {}
-	for _, f in ipairs(bench.frames) do
-		frames[f] = true
-	end
 	self:Message(("bench: %d %s shown, %s per frame, %d frames made this session")
 		:format(#bench.regions, bench.kind or "regions", bench.per and tostring(bench.per) or "all",
 			#bench.frames))
