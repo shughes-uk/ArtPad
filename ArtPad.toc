@@ -25,6 +25,7 @@ Comm.lua
 UI.lua
 Tools.lua
 Map.lua
+Nodes.lua
 Feedback.lua
 Options.lua
 Debug.lua

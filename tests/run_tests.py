@@ -269,6 +269,17 @@ class World:
                     c.tick(step)
             self.route()
 
+    def yards_between(self, a, b):
+        pa, pb = a.lua_client.mapPos, b.lua_client.mapPos
+        if pa is None or pb is None or pa.map != pb.map:
+            return None
+        w, h = 3470.84, 2314.62
+        return (((pa.x - pb.x) * w) ** 2 + ((pa.y - pb.y) * h) ** 2) ** 0.5
+
+    def move(self, client, x=None, y=None, map_id=37):
+        """Stand somewhere on a map (0-1 coordinates); None = nowhere in particular."""
+        client.lua_client.mapPos = None if x is None else client.rt.table_from({"map": map_id, "x": x, "y": y})
+
     def route(self):
         for c in list(self.clients.values()):
             if not c.online:
@@ -281,6 +292,10 @@ class World:
                 elif chan in ("PARTY", "RAID", "INSTANCE_CHAT"):
                     gid = self.groups.get(c.name)
                     to = [x for x in self.clients.values() if x.online and gid and self.groups.get(x.name) == gid]
+                elif chan in ("SAY", "YELL"):
+                    reach = 60 if chan == "SAY" else 400
+                    to = [x for x in self.clients.values() if x.online and self.yards_between(c, x) is not None
+                          and self.yards_between(c, x) <= reach]
                 elif chan == "WHISPER":
                     t = self.clients.get(target.split("-")[0])
                     to = [t] if t and t.online else []
@@ -1471,6 +1486,54 @@ def test_forever_surnames():
     check(c.ev("ArtPad.items[1].author") == "Pip Pembroke", "early strokes re-keyed to the full name")
     guid = c.ev('UnitGUID("player")')
     check(c.ev(f'ArtPad_Settings.FullNames["{guid}"]') == "Pip Pembroke", "full name remembered")
+
+
+def test_place_canvas():
+    INN = (0.438, 0.659)
+    YD = 1 / 3470.84  # one yard east, in map x
+    w = World()
+    a, b, c = w.add("Alice"), w.add("Bob"), w.add("Cat")
+    settle(w)
+    # Everyone starts somewhere else, sharing the guild canvas
+    a.stroke(line(100, 100, 300, 300))
+    w.pump(3)
+    guild_sig = a.signature()
+    check(c.items() == 1, "guild canvas shared")
+    # Alice and Bob walk into the inn
+    w.move(a, *INN)
+    w.move(b, INN[0] + 50 * YD, INN[1])
+    w.pump(2)
+    check(a.ev("ArtPad.node and ArtPad.node.id") == "lionspride", "Alice is at the inn")
+    check(b.ev("ArtPad.node and ArtPad.node.id") == "lionspride", "so is Bob")
+    check(a.items() == 0, "the inn has its own canvas")
+    check(a.ev("ArtPad:GetChannel()") == "YELL", "drawing at the inn goes out on yell")
+    check(a.ev("ArtPad.backdropMap") == 37 and a.ev("ArtPad.backdropView ~= nil"), "map of the area behind it")
+    check(a.ev("(ArtPad:GetSharingState())") == "Lion's Pride Inn", "sharing pill names the place")
+    a.stroke(line(500, 500, 900, 700))
+    w.pump(3)
+    check(b.items() == 1, "Bob sees Alice's inn drawing")
+    check(c.items() == 1 and c.signature() == guild_sig, "Cat (away, in the guild) doesn't")
+    # Cat draws on the guild canvas; nobody at the inn gets it
+    c.stroke(line(0, 1000, 400, 1000))
+    w.pump(3)
+    check(a.items() == 1 and b.items() == 1, "guild drawing doesn't reach the inn")
+    # Alice leaves: back to the guild canvas, which catches up with what she missed
+    w.move(a, INN[0] + 300 * YD, INN[1])
+    w.pump(15)
+    check(a.ev("ArtPad.node") is None, "Alice left the inn")
+    check(a.items() == 2, f"guild canvas back and caught up ({a.items()} items)")
+    check(a.ev("ArtPad.backdropMap") is None, "inn map gone")
+    saved = a.ev("ArtPad_Settings.PlaceCanvases.lionspride ~= nil")
+    check(saved, "inn canvas kept for next time")
+    # Bob leaves too; nobody is at the inn. Alice comes back alone: her copy is still there.
+    w.move(b, None)
+    w.pump(3)
+    w.move(a, *INN)
+    w.pump(8)
+    check(a.items() == 1, "the inn drawing outlived everyone leaving")
+    # Turning it off takes you back
+    a.ex("ArtPad.OnSlashCommand('nearby off')")
+    check(a.ev("ArtPad.node") is None, "nearby off leaves the place")
 
 
 def test_hide_button():

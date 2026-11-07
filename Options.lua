@@ -113,6 +113,9 @@ function ArtPad:SetupOptions()
 	Place(CreateCheck(panel, "Show my name to others when I draw", nil,
 		function() return ArtPad_Settings.ShowMyName end,
 		function(v) ArtPad_Settings.ShowMyName = v end))
+	Place(CreateCheck(panel, "Join the shared canvas at places like the Lion's Pride Inn", nil,
+		function() return ArtPad_Settings.Nearby end,
+		function(v) self:SetNearby(v) end))
 	Place(CreateCheck(panel, "Ask before clearing the canvas for everyone", nil,
 		function() return ArtPad_Settings.WarnClear end,
 		function(v) ArtPad_Settings.WarnClear = v end))

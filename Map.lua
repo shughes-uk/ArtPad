@@ -74,10 +74,13 @@ function ArtPad:AcquireMapTexture(sublevel)
 	return tex
 end
 
--- Apply locally (no network). nil removes the backdrop.
-function ArtPad:SetBackdrop(mapID, overlays)
+-- Apply locally (no network). nil removes the backdrop. view (optional): the part of the map
+-- to show, { x0, y0, x1, y1 } in 0-1 map coordinates, stretched over the whole canvas (used by
+-- places; see Nodes.lua). Without it the whole map is fitted into the canvas.
+function ArtPad:SetBackdrop(mapID, overlays, view)
 	overlays = overlays or ""
-	if mapID == self.backdropMap and overlays == (self.backdropOverlays or "") then return end
+	if mapID == self.backdropMap and overlays == (self.backdropOverlays or "") and view == self.backdropView then return end
+	self.backdropView = mapID and view or nil
 	self.mapTextures = self.mapTextures or {}
 	for _, tex in ipairs(self.mapTextures) do tex:Hide() end
 	self.mapTextureCount = 0
@@ -93,11 +96,30 @@ function ArtPad:DrawBackdrop(mapID, overlays)
 	if not layer then return end
 	local tw, th, lw, lh = layer.tileWidth, layer.tileHeight, layer.layerWidth, layer.layerHeight
 	local W, H = self.canvasSize.X, self.canvasSize.Y
-	local scale = math.min(W / lw, H / lh)
-	local ox, oy = (W - lw * scale) / 2, (H - lh * scale) / 2
-	local function Place(tex, x, y, w, h)
-		tex:SetSize(w * scale, h * scale)
-		tex:SetPoint("TOPLEFT", self.mainFrame, "TOPLEFT", ox + x * scale, -(oy + y * scale))
+	-- The visible window of the map (in map pixels) and how it lands on the canvas.
+	local vx0, vy0, vx1, vy1, sx, sy, ox, oy
+	local view = self.backdropView
+	if view then
+		vx0, vy0, vx1, vy1 = view[1] * lw, view[2] * lh, view[3] * lw, view[4] * lh
+		sx, sy, ox, oy = W / (vx1 - vx0), H / (vy1 - vy0), 0, 0
+	else
+		local scale = math.min(W / lw, H / lh)
+		vx0, vy0, vx1, vy1 = 0, 0, lw, lh
+		sx, sy, ox, oy = scale, scale, (W - lw * scale) / 2, (H - lh * scale) / 2
+	end
+	-- Draw the map rectangle (x, y, w, h), whose texture file spans fw x fh map pixels from
+	-- (x, y), cropped to the visible window. Returns false if none of it is visible.
+	local function Place(tex, x, y, w, h, fw, fh)
+		local ix0, iy0 = math.max(x, vx0), math.max(y, vy0)
+		local ix1, iy1 = math.min(x + w, vx1), math.min(y + h, vy1)
+		if ix1 <= ix0 or iy1 <= iy0 then
+			tex:Hide()
+			return false
+		end
+		tex:SetTexCoord((ix0 - x) / fw, (ix1 - x) / fw, (iy0 - y) / fh, (iy1 - y) / fh)
+		tex:SetSize((ix1 - ix0) * sx, (iy1 - iy0) * sy)
+		tex:SetPoint("TOPLEFT", self.mainFrame, "TOPLEFT", ox + (ix0 - vx0) * sx, -(oy + (iy0 - vy0) * sy))
+		return true
 	end
 
 	-- Base art
@@ -110,8 +132,7 @@ function ArtPad:DrawBackdrop(mapID, overlays)
 		if cw > 0 and ch > 0 then
 			local tile = self:AcquireMapTexture(1)
 			tile:SetTexture(fileID)
-			tile:SetTexCoord(0, cw / tw, 0, ch / th)
-			Place(tile, col * tw, row * th, cw, ch)
+			Place(tile, col * tw, row * th, cw, ch, tw, th)
 		end
 	end
 
@@ -131,8 +152,7 @@ function ArtPad:DrawBackdrop(mapID, overlays)
 						local pw, fw = TileSpan(w, k, wide)
 						local tex = self:AcquireMapTexture(2)
 						tex:SetTexture(fileID)
-						tex:SetTexCoord(0, pw / fw, 0, ph / fh)
-						Place(tex, x + TILE * (k - 1), y + TILE * (j - 1), pw, ph)
+						Place(tex, x + TILE * (k - 1), y + TILE * (j - 1), pw, ph, fw, fh)
 					end
 				end
 			end
@@ -141,6 +161,11 @@ function ArtPad:DrawBackdrop(mapID, overlays)
 end
 
 function ArtPad:ToggleMap()
+	if self.node then
+		self:Notify(("The map stays up at %s."):format(self.node.name), "info")
+		if self.mapSwitch then self.mapSwitch:Refresh() end
+		return
+	end
 	if self.backdropMap then
 		self:ShareBackdrop(nil)
 		self:Notify("Map removed for everyone.", "info")

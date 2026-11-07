@@ -152,6 +152,7 @@ end
 
 -- Channel we broadcast on for the current mode, or nil if there's nobody to talk to.
 function ArtPad:GetChannel()
+	if self.node then return "YELL" end -- at a place (Nodes.lua)
 	if ArtPad_Settings.Mode == "GUILD" then
 		return IsInGuild() and "GUILD" or nil
 	end
@@ -165,6 +166,7 @@ function ArtPad:GetChannel()
 end
 
 function ArtPad:AcceptsDistribution(disType)
+	if self.node then return disType == "YELL" end
 	if ArtPad_Settings.Mode == "GUILD" then
 		return disType == "GUILD"
 	end
@@ -212,7 +214,7 @@ end
 
 -- With AdminOnly on, only accept officers (guild mode) or leader/assists (group mode).
 function ArtPad:ValidateSender(sender)
-	if not ArtPad_Settings.AdminOnly or self:IsSelf(sender) then
+	if self.node or not ArtPad_Settings.AdminOnly or self:IsSelf(sender) then
 		return true
 	end
 	if ArtPad_Settings.Mode == "GUILD" then
@@ -674,6 +676,7 @@ function ArtPad:ApplyLive(msg, author, isReplay, anonymous)
 			end
 		end
 	elseif kind == "B" then
+		if self.node then return end -- a place's map is fixed
 		local id, overlays = body:match("^(%d+);?(.*)$")
 		local mapID = tonumber(id)
 		if mapID then

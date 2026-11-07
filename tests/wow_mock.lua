@@ -259,8 +259,20 @@ function UnitClass() return "Mage", "MAGE" end
 RAID_CLASS_COLORS = { MAGE = { r = 0.25, g = 0.78, b = 0.92 } }
 function GetScreenWidth() return 1920 end
 function GetScreenHeight() return 1080 end
+-- Where this client stands: CLIENT.mapPos = { map = id, x = 0-1, y = 0-1 } (nil: nowhere)
+MAP_YARDS = { [37] = { 3470.84, 2314.62 }, [1429] = { 3470.84, 2314.62 } }
 C_Map = {
-	GetBestMapForUnit = function() return MAP_ID end,
+	GetBestMapForUnit = function() return CLIENT.mapPos and CLIENT.mapPos.map or MAP_ID end,
+	GetPlayerMapPosition = function(mapID, unit)
+		local p = CLIENT.mapPos
+		if unit ~= "player" or not p or p.map ~= mapID then return nil end
+		return { x = p.x, y = p.y, GetXY = function(v) return v.x, v.y end }
+	end,
+	GetMapWorldSize = function(mapID)
+		local s = MAP_YARDS[mapID]
+		if s then return s[1], s[2] end
+		return 0, 0
+	end,
 	GetMapArtLayers = function() return { { layerWidth = 1002, layerHeight = 668, tileWidth = 256, tileHeight = 256 } } end,
 	GetMapArtLayerTextures = function() local t = {} for i = 1, 12 do t[i] = 100 + i end return t end,
 	GetMapInfo = function(id) return { name = "Map" .. id } end,

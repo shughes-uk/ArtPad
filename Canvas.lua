@@ -551,7 +551,7 @@ end
 -- Clears everything, including the backdrop (switching audience, reloading the canvas).
 function ArtPad:ClearAll()
 	self:ClearCanvas()
-	if self.SetBackdrop then self:SetBackdrop(nil) end
+	if self.SetBackdrop and not self.node then self:SetBackdrop(nil) end -- a place keeps its map
 end
 
 --[[ Hit testing for the eraser ]]
@@ -693,7 +693,7 @@ end
 
 function ArtPad:LoadCanvas(snapshot)
 	self:ClearAll()
-	if self.SetBackdrop and tonumber(snapshot.map) then
+	if self.SetBackdrop and tonumber(snapshot.map) and not self.node then
 		self:SetBackdrop(tonumber(snapshot.map), type(snapshot.mapOverlays) == "string" and snapshot.mapOverlays or "")
 	end
 	for _, rec in ipairs(snapshot.items) do

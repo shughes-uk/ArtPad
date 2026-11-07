@@ -39,5 +39,5 @@ read_globals = {
 	"IsInGuild", "GetNumGuildMembers", "GetGuildRosterInfo", "GuildControlGetRankName",
 	"IsInGroup", "IsInRaid", "GetNumGroupMembers", "GetRaidRosterInfo", "LE_PARTY_CATEGORY_INSTANCE",
 	"CopyTable", "wipe", "tinsert", "strtrim",
-	"GetScreenWidth", "GetScreenHeight", "C_Map", "C_MapExplorationInfo", "UnitClass", "RAID_CLASS_COLORS",
+	"GetScreenWidth", "GetScreenHeight", "C_Map", "C_MapExplorationInfo", "CreateVector2D", "UnitClass", "RAID_CLASS_COLORS",
 }

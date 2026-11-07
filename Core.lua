@@ -36,6 +36,8 @@ local defaults = {
 	AdminGuildRank = 1, -- guild rank index counted as officer (0 = guild master)
 	WarnClear = true, -- confirm before clearing the canvas for everyone
 	FullNames = {}, -- character GUID -> name as others see it (WoW Forever adds a surname)
+	Nearby = true, -- switch to a place's canvas when you're there (Nodes.lua)
+	PlaceCanvases = {}, -- place id -> saved canvas
 	NameTags = true, -- show who is drawing
 	ShowMyName = true, -- let others see my name on what I draw
 	HideInCombat = true,
@@ -149,7 +151,7 @@ function ArtPad:OnEnable()
 	-- Messaging first: it doesn't depend on the UI, so drawing and syncing keep working even
 	-- if a piece of the UI fails to build. Each step reports its own error to chat.
 	self:SetupComm()
-	for _, step in ipairs({ "SetupUI", "SetupTools", "SetupFeedback", "SetupOptions", "SetupLauncher" }) do
+	for _, step in ipairs({ "SetupUI", "SetupTools", "SetupFeedback", "SetupOptions", "SetupLauncher", "SetupPlaces" }) do
 		local ok, err = pcall(self[step], self)
 		if not ok then
 			self:Message("|cffff6060setup failed (" .. step .. "):|r " .. tostring(err))
@@ -179,6 +181,10 @@ function events:PLAYER_ENTERING_WORLD()
 	end
 end
 
+function events:PLAYER_LOGOUT()
+	self:SavePlaceCanvas()
+end
+
 function events:PLAYER_REGEN_DISABLED()
 	if ArtPad_Settings.HideInCombat and self.window:IsShown() then
 		self.window:Hide()
@@ -205,6 +211,14 @@ function events:PLAYER_GUILD_UPDATE() self:RequestRefresh() end
 function ArtPad:SetMode(mode)
 	if ArtPad_Settings.Mode == mode then return end
 	ArtPad_Settings.Mode = mode
+	if self.node then
+		-- At a place: the new audience takes over when you leave it.
+		self.outsideCanvas = nil
+		self:Notify(mode == "GUILD" and "You'll share with your guild after leaving here."
+			or "You'll share with your party / raid after leaving here.", "info")
+		self:RefreshOptions()
+		return
+	end
 	self:Notify(mode == "GUILD" and "Now sharing with your guild." or "Now sharing with your party / raid.", "success")
 	self:RequestRefresh()
 	-- A different audience means a different shared canvas.
@@ -302,6 +316,11 @@ ArtPad.slashCommands = {
 	end,
 	fit = function(self) self:ResetPosition() end,
 	stats = function(self) self:PrintStats() end,
+	node = function(self) self:PrintPlaces() end, -- hidden: distances to places
+	nearby = function(self, arg)
+		self:SetNearby(OnOff(arg, not ArtPad_Settings.Nearby))
+		self:Message("canvases at places like inns: " .. (ArtPad_Settings.Nearby and "on" or "off"))
+	end,
 	bench = function(self, arg) self:BenchCommand(arg) end, -- hidden: Debug.lua
 	size = function(self, arg)
 		local n = tonumber(arg)

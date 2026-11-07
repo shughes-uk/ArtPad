@@ -19,6 +19,11 @@ the title bar shows who you're sharing with; click it to switch or to hide your 
 People who log in, join your group or switch mode receive the existing canvas from
 whoever has the most complete copy.
 
+Places: at the Lion's Pride Inn (Goldshire) ArtPad switches to the inn's own canvas, shared
+with everyone there who runs ArtPad, with the map of the area behind it. Walk away and your
+guild/group canvas comes back. The inn's drawing is kept, so it's still there next visit.
+Turn it off in the options or with /ap nearby off.
+
 Development:
   Link the repo folder into the game (no admin needed), then /reload after editing:
     New-Item -ItemType Junction -Path "C:\Program Files (x86)\World of Warcraft\_retail_\Interface\AddOns\ArtPad" -Target <repo>

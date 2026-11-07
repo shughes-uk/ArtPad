@@ -579,7 +579,10 @@ function ArtPad:RefreshInspector()
 	self.opacityValue:SetText(pct .. "%")
 	self.opacitySlider.Set(pct)
 
-	if self.backdropMap then
+	if self.node then
+		self.mapTitle:SetText(self.node.name)
+		self.mapSub:SetText("The map around you")
+	elseif self.backdropMap then
 		self.mapTitle:SetText(self:GetMapName(self.backdropMap) or "Map")
 		self.mapSub:SetText(self.backdropBy and ("Shared by " .. self.backdropBy) or "Shared")
 	else
