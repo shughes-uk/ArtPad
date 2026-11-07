@@ -117,9 +117,10 @@ end
 function ArtPad:EnterPlace(place, mapID)
 	self:SwitchScope()
 	self.node = place
-	self:ClearCanvas()
+	self:Quietly(self.ClearCanvas)
+	self.canvasModified = 0
 	self.backdropBy = nil
-	self:SetBackdrop(mapID, self:GetExploredOverlays(mapID), self:PlaceView(place, mapID))
+	self:Quietly(self.SetBackdrop, mapID, self:GetExploredOverlays(mapID), self:PlaceView(place, mapID))
 	local saved = type(ArtPad_Settings.PlaceCanvases) == "table" and ArtPad_Settings.PlaceCanvases[place.id]
 	if type(saved) == "table" and type(saved.items) == "table" then
 		local ok, err = pcall(self.LoadCanvas, self, saved)
@@ -137,7 +138,7 @@ function ArtPad:LeavePlace(quiet)
 	self:SavePlaceCanvas()
 	self:SwitchScope()
 	self.node = nil
-	self:ClearAll()
+	self:ResetCanvas()
 	if not quiet then
 		self:Notify(("Left %s. Its drawing is kept for next time."):format(place.name), "info", { quiet = true })
 	end
@@ -157,7 +158,8 @@ function ArtPad:PrintPlaces()
 			self.node == place and " - you're here" or ""))
 	end
 	local mapID = C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
-	local x, y = mapID and PlayerOn(mapID)
+	local x, y
+	if mapID then x, y = PlayerOn(mapID) end
 	if x then
 		self:Message(("you: map %d at %.4f, %.4f"):format(mapID, x, y))
 	end

@@ -777,10 +777,14 @@ function ArtPad:StartSync(reason)
 	self.syncBuffer = {}
 	self.syncPhase = "searching"
 	self.syncStarted = GetTime()
+	-- Our copy as it was when we asked: what offers are compared against (anything drawn
+	-- meanwhile is re-applied on top of whichever copy wins).
+	self.syncOurs = { modified = self.canvasModified, count = #self.items, sender = self.playerName, bytes = math.huge }
 	self.syncProgress = nil
 	self:RequestRefresh()
 	local nonce = self.syncNonce
-	self:SendCommMessage(self.syncPrefix, "Q(" .. nonce .. ")", channel, nil, "ALERT")
+	-- Our copy's age goes along, so anyone holding an older copy knows to fetch ours.
+	self:SendCommMessage(self.syncPrefix, ("Q(%s,%d)"):format(nonce, self.canvasModified), channel, nil, "ALERT")
 	C_Timer.After(SYNC_COLLECT, function() self:RequestSnapshot(nonce) end)
 end
 
@@ -789,10 +793,15 @@ function ArtPad:RequestSnapshot(nonce)
 	if not self.syncing or nonce ~= self.syncNonce then return end
 	local best
 	for _, offer in ipairs(self.syncOffers) do
-		if not offer.tried and (not best or offer.count > best.count
-				or (offer.count == best.count and offer.bytes < best.bytes)) then
+		if not offer.tried and (not best or self.NewerCopy(offer, best)) then
 			best = offer
 		end
+	end
+	-- Newest copy wins - and that may be the one we already have.
+	if best and self.syncOurs and not self.NewerCopy(best, self.syncOurs) then
+		self:Debug("sync: our copy is the newest")
+		self:FinishSync(nil, nil, nil, true)
+		return
 	end
 	if not best then
 		self:Debug("sync: no (more) canvas offers")
@@ -825,7 +834,26 @@ function ArtPad:ArmSyncTimeout(nonce, seconds)
 	end)
 end
 
-function ArtPad:FinishSync(snapshot, from, failedFrom)
+-- Is copy a newer than copy b? Last-changed time, then more items, then smaller, then name
+-- (so everyone breaks ties the same way). Copies: { modified, count, bytes, sender }.
+function ArtPad.NewerCopy(a, b)
+	if a.modified ~= b.modified then return a.modified > b.modified end
+	if a.count ~= b.count then return a.count > b.count end
+	if a.bytes ~= b.bytes then return a.bytes < b.bytes end
+	return ShortName(a.sender) < ShortName(b.sender)
+end
+
+-- Someone asked for the canvas with a newer copy than ours: once they've settled, fetch it.
+function ArtPad:FetchNewerCopy()
+	if self.newerCopyPending then return end
+	self.newerCopyPending = true
+	C_Timer.After(SYNC_COLLECT + 4, function()
+		self.newerCopyPending = nil
+		if not self.syncing then self:StartSync("someone has a newer copy") end
+	end)
+end
+
+function ArtPad:FinishSync(snapshot, from, failedFrom, keptOurs)
 	local buffer = self.syncBuffer
 	self.syncing = false
 	self.syncToken = nil
@@ -838,7 +866,7 @@ function ArtPad:FinishSync(snapshot, from, failedFrom)
 		self:Notify(("Couldn't load the canvas from %s."):format(ShortName(failedFrom)), "error", {
 			action = { "Retry", function() self:StartSync("retry") end },
 		})
-	elseif not snapshot then
+	elseif not snapshot and not keptOurs and #self.items == 0 then
 		self:Notify("Nobody else has a drawing up yet. You're starting fresh!", "info", { quiet = true })
 	end
 	if snapshot then
@@ -869,7 +897,12 @@ end
 function ArtPad:OnSyncMessage(prefix, msg, disType, sender)
 	local kind, arg = msg:match("^(%a)%(([^)]*)%)")
 	-- Our own canvas request coming back tells us the name others see us by.
-	if kind == "Q" and self.syncNonce and arg == self.syncNonce then
+	local queryNonce, queryModified
+	if kind == "Q" then
+		queryNonce, queryModified = arg:match("^(%x+),?(%d*)$")
+		queryModified = tonumber(queryModified) or 0
+	end
+	if kind == "Q" and self.syncNonce and queryNonce == self.syncNonce then
 		self:LearnOwnName(sender)
 		return
 	end
@@ -880,15 +913,20 @@ function ArtPad:OnSyncMessage(prefix, msg, disType, sender)
 		if disType == "WHISPER" or not self:AcceptsDistribution(disType) then return end
 		-- Answer even while syncing ourselves (if we have something): otherwise two people
 		-- joining at once would each wait on the other. The joiner picks the fullest canvas.
-		if #self.items == 0 then return end
+		if not queryNonce then return end
+		if queryModified > self.canvasModified then self:FetchNewerCopy() end
+		-- An empty canvas still counts if it's a real change (a clear): it must beat old copies.
+		if #self.items == 0 and self.canvasModified == 0 then return end
 		local data = self:GetSnapshotData()
-		self:SendCommMessage(prefix, ("H(%s,%d,%d)"):format(arg, #self.items, #data), "WHISPER", sender, "ALERT")
+		self:SendCommMessage(prefix, ("H(%s,%d,%d,%d)"):format(queryNonce, #self.items, #data, self.canvasModified),
+			"WHISPER", sender, "ALERT")
 	elseif disType ~= "WHISPER" then
 		return
 	elseif kind == "H" then
-		local nonce, count, bytes = arg:match("^(%x+),(%d+),(%d+)$")
+		local nonce, count, bytes, modified = arg:match("^(%x+),(%d+),(%d+),?(%d*)$")
 		if self.syncing and nonce == self.syncNonce and self:ValidateSender(sender) then
-			tinsert(self.syncOffers, { sender = sender, count = tonumber(count), bytes = tonumber(bytes) })
+			tinsert(self.syncOffers, { sender = sender, count = tonumber(count), bytes = tonumber(bytes),
+				modified = tonumber(modified) or 0 })
 		end
 	elseif kind == "G" then
 		self:SendSnapshot(arg, sender)

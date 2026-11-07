@@ -3,7 +3,7 @@
 ## Notes: Shared canvas for your guild or group
 ## Version: 10.2
 ## X-SaveVersion: 3
-## X-ProtocolVersion: 5
+## X-ProtocolVersion: 6
 ## Author: Dust, Turalyon-EU & Catmancer, Moonguard US
 ## IconTexture: Interface\AddOns\ArtPad\icon
 ## Category: Miscellaneous

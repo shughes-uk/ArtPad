@@ -132,7 +132,7 @@ function ArtPad:SetupOptions()
 
 	y = y - 10
 	local resync = CreateButton(panel, "Reload canvas from others", 200, function()
-		self:ClearAll()
+		self:ResetCanvas()
 		self:StartSync("manual")
 	end)
 	resync:SetPoint("TOPLEFT", 16, y)

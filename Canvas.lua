@@ -243,9 +243,40 @@ local function SegAlive(s, i)
 end
 ArtPad.SegAlive = SegAlive
 
+--[[ Newest copy wins
+
+	Every copy of a canvas remembers when it last changed (server time, so clocks agree):
+	any stroke, erase, undo, clear or map change - yours or received live. When copies meet
+	(joining, arriving at a place) the newest one wins; everyone in a session receives the
+	same changes, so they hold the same time anyway. Housekeeping (loading a copy, switching
+	canvases, a local-only clear) happens "quietly" and doesn't count as a change: a loaded
+	copy keeps its own time, and an emptied canvas has time 0, so it never beats a real one.
+]]
+
+ArtPad.canvasModified = 0
+
+function ArtPad:ServerNow()
+	return GetServerTime and GetServerTime() or time()
+end
+
 function ArtPad:Changed()
 	self.canvasVersion = self.canvasVersion + 1
 	self.refreshPending = true -- status bar, undo button and empty state follow the canvas
+	if (self.quiet or 0) == 0 then self.canvasModified = self:ServerNow() end
+end
+
+-- Run f(self, ...) without it counting as a change to the canvas.
+function ArtPad:Quietly(f, ...)
+	self.quiet = (self.quiet or 0) + 1
+	local ok, err = pcall(f, self, ...)
+	self.quiet = self.quiet - 1
+	if not ok then error(err, 0) end
+end
+
+-- Empty the canvas (and map) as housekeeping: switching audience, resyncing.
+function ArtPad:ResetCanvas()
+	self:Quietly(self.ClearAll)
+	self.canvasModified = 0
 end
 
 -- Returns the stroke with this id, creating it if needed (nil if the id is another kind).
@@ -688,10 +719,11 @@ function ArtPad:SerializeCanvas()
 			tinsert(out, { it.id, "T", it.author, self.ColorString(it), it.x, it.y, it.text, it.size })
 		end
 	end
-	return { v = 2, items = out, map = self.backdropMap, mapOverlays = self.backdropOverlays }
+	return { v = 2, items = out, map = self.backdropMap, mapOverlays = self.backdropOverlays,
+		modified = self.canvasModified }
 end
 
-function ArtPad:LoadCanvas(snapshot)
+local function LoadCanvasBody(self, snapshot)
 	self:ClearAll()
 	if self.SetBackdrop and tonumber(snapshot.map) and not self.node then
 		self:SetBackdrop(tonumber(snapshot.map), type(snapshot.mapOverlays) == "string" and snapshot.mapOverlays or "")
@@ -732,4 +764,10 @@ function ArtPad:LoadCanvas(snapshot)
 			end
 		end
 	end
+end
+
+-- Replace the canvas with a copy; it keeps the copy's own last-changed time.
+function ArtPad:LoadCanvas(snapshot)
+	self:Quietly(LoadCanvasBody, snapshot)
+	self.canvasModified = tonumber(snapshot.modified) or 0
 end

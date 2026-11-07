@@ -33,7 +33,7 @@ read_globals = {
 	"OpacitySliderFrame",
 	"StaticPopup_Show", "YES", "NO",
 	"Settings", "InterfaceOptions_AddCategory", "InterfaceOptionsFrame_OpenToCategory",
-	"InCombatLockdown", "IsShiftKeyDown", "GetCursorPosition", "GetTime", "time",
+	"InCombatLockdown", "IsShiftKeyDown", "GetCursorPosition", "GetTime", "time", "GetServerTime",
 	"SetOverrideBindingClick", "ClearOverrideBindings",
 	"UnitName", "UnitGUID", "Ambiguate", "UNKNOWNOBJECT",
 	"IsInGuild", "GetNumGuildMembers", "GetGuildRosterInfo", "GuildControlGetRankName",

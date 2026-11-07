@@ -190,6 +190,7 @@ function debugprofilestop() return NOW * 1000 end
 function GetFramerate() return 60 end
 
 TIMERS = {}
+function GetServerTime() return 1700000000 + math.floor(NOW) end
 C_Timer = {}
 local function addTimer(d, f, repeats)
 	local h = { t = NOW + d, f = f, d = d, repeats = repeats }

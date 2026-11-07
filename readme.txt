@@ -17,8 +17,9 @@ Usage:
 Drag the title bar to move the window and the bottom-right corner to resize it. The pill in
 the title bar shows who you're sharing with; click it to switch or to hide your name.
 
-People who log in, join your group or switch mode receive the existing canvas from
-whoever has the most complete copy.
+People who log in, join your group or switch mode receive the existing canvas. If copies
+differ (say, two visits to the inn on different days), the most recently changed one wins -
+including a clear, so cleared drawings don't come back from someone's old copy.
 
 Local mode: share with whoever is at the same place instead of your guild or group. For now
 the one place is the Lion's Pride Inn in Goldshire: there you get the inn's canvas, shared with

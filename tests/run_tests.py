@@ -1541,6 +1541,62 @@ def test_local_mode_places():
     check(a.ev("ArtPad.backdropMap") is None, "inn map gone")
 
 
+def test_newest_copy_wins():
+    INN = (0.438, 0.659)
+    AWAY = (0.438 + 300 / 3470.84, 0.659)
+    w = World()
+    a, b = w.add("Alice"), w.add("Bob")
+    settle(w)
+    for c in (a, b):
+        c.ex("ArtPad.OnSlashCommand('local')")
+    w.move(a, *AWAY)
+    w.move(b, *AWAY)
+    w.pump(2)
+
+    # 1. Alice draws at the inn alone, then leaves; later Bob draws there alone and stays.
+    w.move(a, *INN)
+    w.pump(3)
+    a.stroke(line(100, 100, 400, 100))
+    w.pump(2)
+    w.move(a, *AWAY)
+    w.pump(5)
+    w.move(b, *INN)
+    w.pump(3)
+    b.stroke(line(100, 900, 400, 900))
+    b.stroke(line(100, 1000, 400, 1000))
+    w.pump(5)
+    # Alice comes back with her older copy: Bob's newer one wins
+    w.move(a, *INN)
+    w.pump(15)
+    check(a.items() == 2 and a.signature() == b.signature(), "arriving with an older copy: the newer one wins")
+
+    # 2. Bob leaves with that copy. Alice clears and draws something new, then leaves.
+    w.move(b, *AWAY)
+    w.pump(5)
+    a.ex("ArtPad:ClearForEveryone()")
+    a.stroke(line(2000, 500, 2500, 500))
+    w.pump(5)
+    w.move(a, *AWAY)
+    w.pump(5)
+    # Bob comes back alone (his old copy), then Alice arrives with the newer one
+    w.move(b, *INN)
+    w.pump(8)
+    check(b.items() == 2, "alone, Bob has his old copy")
+    w.move(a, *INN)
+    w.pump(25)
+    check(a.items() == 1 and b.items() == 1 and a.signature() == b.signature(),
+          f"arriving with a newer copy replaces the older one there (Alice {a.items()}, Bob {b.items()})")
+
+    # 3. A clear beats an old full copy: Bob leaves with the drawing, Alice clears it.
+    w.move(b, *AWAY)
+    w.pump(5)
+    a.ex("ArtPad:ClearForEveryone()")
+    w.pump(3)
+    w.move(b, *INN)
+    w.pump(15)
+    check(b.items() == 0, f"a clear isn't undone by an older copy ({b.items()} items came back)")
+
+
 def test_hide_button():
     w = World()
     a = w.add("Alice")

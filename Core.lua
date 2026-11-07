@@ -98,7 +98,7 @@ function ArtPad:LearnOwnName(sender)
 	end
 	if full ~= self.playerName then
 		self:Debug(("own name is %s (was %s)"):format(full, tostring(self.playerName)))
-		if self.RenameAuthor then self:RenameAuthor(self.playerName, full) end
+		if self.RenameAuthor then self:Quietly(self.RenameAuthor, self.playerName, full) end
 		self.playerName = full
 	end
 end
@@ -220,7 +220,7 @@ function ArtPad:SetMode(mode)
 	self:Notify(MODE_MESSAGES[mode], "success")
 	self:RequestRefresh()
 	-- A different audience means a different shared canvas.
-	self:ClearAll()
+	self:ResetCanvas()
 	if mode == "LOCAL" then
 		self:CheckPlaces() -- joins the place you're at, if any
 	else
@@ -304,7 +304,8 @@ ArtPad.slashCommands = {
 	hide = function(self) self.window:Hide() end,
 	toggle = function(self) self:Toggle() end,
 	clear = function(self)
-		self:ClearCanvas()
+		self:Quietly(self.ClearCanvas)
+		self.canvasModified = 0 -- local only: must not beat anyone's copy
 		self:Message("cleared your local canvas (others keep theirs).")
 	end,
 	undo = function(self) self:Undo() end,
@@ -312,7 +313,7 @@ ArtPad.slashCommands = {
 	raid = function(self) self:SetMode("RAID") end,
 	["local"] = function(self) self:SetMode("LOCAL") end,
 	resync = function(self)
-		self:ClearAll()
+		self:ResetCanvas()
 		self:StartSync("manual")
 	end,
 	map = function(self) self:ToggleMap() end,

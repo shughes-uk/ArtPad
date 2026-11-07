@@ -87,12 +87,14 @@ function ArtPad:BenchScribble(points)
 	bench.strokes = bench.strokes or {}
 	table.insert(bench.strokes, s)
 	local x, y, angle = self.canvasSize.X / 2, self.canvasSize.Y / 2, 0
+	self.quiet = (self.quiet or 0) + 1 -- not a change to the shared canvas
 	for i = 1, points do
 		angle = angle + (math.random() - 0.5) * 2.4
 		x = math.max(20, math.min(self.canvasSize.X - 20, x + 14 * math.cos(angle)))
 		y = math.max(20, math.min(self.canvasSize.Y - 20, y + 14 * math.sin(angle)))
 		self:SetStrokePoint(s, i, math.floor(x), math.floor(y))
 	end
+	self.quiet = self.quiet - 1
 	self:Message(("bench: scribble of %d points; canvas lines in use %d (budget %s, cap %s)%s")
 		:format(points, self.linesInUse, tostring(self.lineBudget), tostring(self.lineCap),
 			self.coarse and ", simplified" or ""))
