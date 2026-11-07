@@ -1,7 +1,7 @@
 ## Interface: 16001, 120105
 ## Title: ArtPad
 ## Notes: Shared canvas for your guild or group
-## Version: 10.1
+## Version: 10.2
 ## X-SaveVersion: 3
 ## X-ProtocolVersion: 5
 ## Author: Dust, Turalyon-EU & Catmancer, Moonguard US
