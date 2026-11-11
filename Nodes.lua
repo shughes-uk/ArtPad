@@ -97,21 +97,31 @@ function ArtPad:CheckPlaces()
 	end
 end
 
--- Switching canvases: finish what you're doing and drop anything not yet sent, so it can't
--- leak to the other audience.
+-- The audience is changing (mode, place, group, loopback): finish what you're doing and drop
+-- everything that belonged to the old one, so nothing of it can reach or be loaded for the
+-- new one. Every audience change goes through here.
 function ArtPad:SwitchScope()
 	if self.EndInteraction then self:EndInteraction() end
+	if self.EndTextPlacement and self.ghostText then self:EndTextPlacement() end
+	if self.CloseClearConfirm then self:CloseClearConfirm() end -- it names the old audience
+	self.currentStroke = nil
 	if self.outQueue then wipe(self.outQueue) end
-	self.syncing, self.syncNonce, self.syncToken, self.syncPhase = false, nil, nil, nil
-	self.syncBuffer = {}
+	if self.AbortSync then self:AbortSync() end
+	self.scope = (self.scope or 0) + 1 -- delayed work armed for the old audience checks this
+	self.offered = {}
+	self.resyncKeep = nil
 	wipe(self.activeArtists or {})
+	if self.SetLauncherActive then self:SetLauncherActive(false) end
 end
 
+-- Kept even when empty if it was really changed (cleared): the time of that clear is what
+-- stops an older copy from bringing the drawing back.
 function ArtPad:SavePlaceCanvas()
 	local place = self.node
 	if not place then return end
 	if type(ArtPad_Settings.PlaceCanvases) ~= "table" then ArtPad_Settings.PlaceCanvases = {} end
-	ArtPad_Settings.PlaceCanvases[place.id] = #self.items > 0 and self:SerializeCanvas() or nil
+	local keep = #self.items > 0 or self.canvasModified > 0
+	ArtPad_Settings.PlaceCanvases[place.id] = keep and self:SerializeCanvas() or nil
 end
 
 function ArtPad:EnterPlace(place, mapID)
@@ -124,7 +134,13 @@ function ArtPad:EnterPlace(place, mapID)
 	local saved = type(ArtPad_Settings.PlaceCanvases) == "table" and ArtPad_Settings.PlaceCanvases[place.id]
 	if type(saved) == "table" and type(saved.items) == "table" then
 		local ok, err = pcall(self.LoadCanvas, self, saved)
-		if not ok then self:Debug("place: bad saved canvas: " .. tostring(err)) end
+		if ok then
+			self.copyComplete = true -- as of our last visit; anything newer wins the sync below
+		else
+			self:Debug("place: bad saved canvas: " .. tostring(err))
+			self:ResetCanvas()
+			self:Quietly(self.SetBackdrop, mapID, self:GetExploredOverlays(mapID), self:PlaceView(place, mapID))
+		end
 	end
 	self:Notify(("You're at %s. Everyone here with ArtPad shares this canvas."):format(place.name), "info")
 	self:StartSync("arrived at " .. place.id)

@@ -77,8 +77,36 @@ end
 -- Apply locally (no network). nil removes the backdrop. view (optional): the part of the map
 -- to show, { x0, y0, x1, y1 } in 0-1 map coordinates, stretched over the whole canvas (used by
 -- places; see Nodes.lua). Without it the whole map is fitted into the canvas.
+-- Overlay strings come from other players (live, and inside canvas copies), so they are
+-- checked before anything is drawn or kept: each overlay must be well formed, fit on the map
+-- and carry at least the tiles its size needs. A size the map couldn't have (a few digits are
+-- enough to ask for millions of tiles) is dropped, not looped over.
+local MAX_OVERLAYS, MAX_OVERLAY_TILES, MAX_OVERLAY_SIDE = 96, 64, 8192
+
+function ArtPad:SanitizeOverlays(mapID, overlays)
+	if type(overlays) ~= "string" or overlays == "" then return "" end
+	local layer = self:GetMapTiles(mapID)
+	local maxW = layer and layer.layerWidth or MAX_OVERLAY_SIDE
+	local maxH = layer and layer.layerHeight or MAX_OVERLAY_SIDE
+	local out = {}
+	for overlay in overlays:gmatch("[^;]+") do
+		local w, h, x, y, ids = overlay:match("^(%d+),(%d+),(%-?%d+),(%-?%d+),([%d%.]+)$")
+		w, h, x, y = tonumber(w), tonumber(h), tonumber(x), tonumber(y)
+		if w and #overlay <= 600 and w >= 1 and h >= 1 and w <= maxW and h <= maxH
+				and math.abs(x) <= MAX_OVERLAY_SIDE and math.abs(y) <= MAX_OVERLAY_SIDE then
+			local tiles = math.ceil(w / TILE) * math.ceil(h / TILE)
+			local _, count = ids:gsub("%d+", "")
+			if tiles <= MAX_OVERLAY_TILES and count >= tiles then
+				out[#out + 1] = overlay
+				if #out >= MAX_OVERLAYS then break end
+			end
+		end
+	end
+	return table.concat(out, ";")
+end
+
 function ArtPad:SetBackdrop(mapID, overlays, view)
-	overlays = overlays or ""
+	overlays = mapID and self:SanitizeOverlays(mapID, overlays) or ""
 	if mapID == self.backdropMap and overlays == (self.backdropOverlays or "") and view == self.backdropView then return end
 	self.backdropView = mapID and view or nil
 	self.mapTextures = self.mapTextures or {}
@@ -203,3 +231,5 @@ function ArtPad:ApplyMapDim()
 	dim:SetColorTexture(0, 0, 0, ArtPad_Settings.MapDim or 0)
 	dim:SetShown(self.backdropMap ~= nil)
 end
+
+ArtPad.MapTileSpan = TileSpan -- for /ap bench mapshot (Debug.lua)

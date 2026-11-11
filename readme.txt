@@ -11,8 +11,12 @@ Usage:
   /ap raid       share with your party / raid / instance group
   /ap local      share with whoever is at the same place (for now: the Lion's Pride Inn)
   /ap resync     re-download the canvas from others
+  /ap versions   list ArtPad versions in your guild and group (different versions can't sync)
   /ap loopback   test sync on your own: your drawing round-trips through the server
   /ap resetui    put the window back to its default size and spot
+
+Drawing on the world map: click the round pencil button on the world map, or hold Alt and
+drag on the map. These drawings are kept per map and only you see them.
 
 Drag the title bar to move the window and the bottom-right corner to resize it. The pill in
 the title bar shows who you're sharing with; click it to switch or to hide your name.

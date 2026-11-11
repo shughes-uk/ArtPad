@@ -60,15 +60,29 @@ end
 --[[ Toasts ]]
 
 -- kind: "info" | "success" | "warn" | "error".
--- opts: { action = { label, func }, duration = seconds (false = until dismissed), quiet = true }
--- While the window is closed, toasts go to chat instead, unless opts.quiet.
+-- opts: { action = { label, func }, duration = seconds (false = until dismissed), quiet = true,
+--         owner = "text" (who may dismiss it early; see DismissToast) }
+-- While the window is closed, toasts go to chat instead, unless opts.quiet. One with an
+-- action (Retry) is also kept and shown when the window next opens.
 function ArtPad:Notify(msg, kind, opts)
 	kind, opts = kind or "info", opts or {}
 	local toast = self.toast
 	if not (toast and self.window:IsShown()) then
 		if not opts.quiet then self:Message(msg) end
+		if toast and opts.action then self.pendingToast = { msg, kind, opts } end
 		return
 	end
+	-- There is one toast. A tool's hint may cover an error that is waiting for an answer
+	-- (Retry), but must not lose it: the error comes back when the hint goes. Anything else
+	-- that arrives is newer information and simply replaces what was there.
+	local shown = toast:IsShown() and toast.current
+	if opts.owner and shown and shown[3].action and not shown[3].owner then
+		self.toastUnder = shown
+	elseif not opts.owner then
+		self.toastUnder = nil
+	end
+	toast.owner = opts.owner
+	toast.current = { msg, kind, opts }
 	local c = COLORS[kind] or COLORS.info
 	toast.dot:SetVertexColor(c[1], c[2], c[3], 1)
 	toast.text:SetText(msg)
@@ -96,7 +110,17 @@ function ArtPad:Notify(msg, kind, opts)
 	self.FadeTo(toast, 1, 0.15)
 end
 
-function ArtPad:DismissToast()
+-- owner: dismiss only if the toast on show is that owner's (the text tool's hints must not
+-- take a Retry error down with them). No owner: dismiss whatever is showing.
+function ArtPad:DismissToast(owner)
+	if owner and self.toast and self.toast.owner ~= owner then return end
+	local under = self.toastUnder
+	self.toastUnder = nil
+	if owner and under then
+		self:Notify(under[1], under[2], under[3]) -- the hint is done: back to what it covered
+		return
+	end
+	if self.toast then self.toast.current = nil end
 	if self.toast and self.toast:IsShown() then
 		self.toast.expires = nil
 		self.FadeTo(self.toast, 0, 0.25)
@@ -106,6 +130,7 @@ end
 local function ToastOnUpdate(toast)
 	if toast.expires and GetTime() >= toast.expires and not toast:IsMouseOver() then
 		toast.expires = nil
+		toast.current = nil
 		ArtPad.FadeTo(toast, 0, 0.4)
 	end
 end
@@ -262,6 +287,8 @@ end
 --[[ Text placement preview ]]
 
 function ArtPad:BeginTextPlacement(text)
+	if self:IsDragging() then self:EndInteraction() end -- never leave a stroke half-drawn behind
+	if self.stampGhost then self.stampGhost:Hide() end
 	self.pendingText = text
 	self.state = "TEXT"
 	local c = self.brushColor
@@ -269,14 +296,14 @@ function ArtPad:BeginTextPlacement(text)
 	self.ghostText:SetTextColor(c.r, c.g, c.b, 0.6)
 	self:UpdateGhost()
 	self.ghostText:Show()
-	self:Notify("Click to place. Esc to cancel.", "info", { duration = false })
+	self:Notify("Click to place. Esc to cancel.", "info", { duration = false, owner = "text" })
 end
 
 function ArtPad:EndTextPlacement()
 	self.pendingText = nil
 	if self.state == "TEXT" then self.state = "SLEEP" end
 	self.ghostText:Hide()
-	self:DismissToast()
+	self:DismissToast("text")
 end
 
 function ArtPad:UpdateGhost()

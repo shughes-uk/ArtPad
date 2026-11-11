@@ -132,7 +132,12 @@ function methods:GetFontString()
 end
 function methods:SetValue(v) self._value = v end
 function methods:GetValue() return self._value end
-function methods:IsMouseOver() return false end
+-- Geometric in WoW; here a per-frame switch (f._over) with a global default (MOUSE_OVER)
+function methods:IsMouseOver()
+	local over = rawget(self, "_over")
+	if over ~= nil then return over end
+	return MOUSE_OVER == true
+end
 function methods:SetChecked(v) self._checked = v end
 function methods:GetChecked() return self._checked end
 function methods:SetStartPoint(_, _, x, y) self.sx, self.sy = x, y end
@@ -246,7 +251,12 @@ function UnitName(unit) if unit == "player" then return CLIENT.unitName or CLIEN
 function UnitGUID(unit) if unit == "player" then return "Player-1-" .. CLIENT.name end end
 function GetRealmName() return REALM end
 function GetNormalizedRealmName() return REALM end
-function Ambiguate(name, _) return (name:gsub("%-.*$", "")) end
+-- Like the client: "none" drops the realm only when it is the player's own
+function Ambiguate(name, _)
+	local base, realm = name:match("^([^%-]+)%-(.+)$")
+	if base and realm == REALM then return base end
+	return name
+end
 function UnitIsUnit() return false end
 function IsInGuild() return CLIENT.guild end
 function GetNumGuildMembers() return #CLIENT.guildRoster, #CLIENT.guildRoster end
@@ -259,6 +269,7 @@ C_GuildInfo = { GuildRoster = noop }
 function UnitClass() return "Mage", "MAGE" end
 RAID_CLASS_COLORS = { MAGE = { r = 0.25, g = 0.78, b = 0.92 } }
 function GetScreenWidth() return 1920 end
+function GetPhysicalScreenSize() return 2560, 1440 end
 function GetScreenHeight() return 1080 end
 -- Where this client stands: CLIENT.mapPos = { map = id, x = 0-1, y = 0-1 } (nil: nowhere)
 MAP_YARDS = { [37] = { 3470.84, 2314.62 }, [1429] = { 3470.84, 2314.62 } }
@@ -293,19 +304,95 @@ function GetRaidRosterInfo(i)
 	local m = CLIENT.groupMembers[i]
 	if m then return m.name, m.rank end
 end
-function InCombatLockdown() return false end
+function InCombatLockdown() return IN_COMBAT == true end
 function IsLoggedIn() return LOGGED_IN end
 function IsShiftKeyDown() return SHIFT_DOWN end
 function IsControlKeyDown() return false end
 function GetCursorPosition() return CURSOR_X or 0, CURSOR_Y or 0 end
-function SetOverrideBindingClick(owner, _, key, button) BINDINGS[key] = button end
-function ClearOverrideBindings() BINDINGS = {} end
+-- Override bindings belong to an owner frame, and (like the real client) can't be changed
+-- in combat. BINDINGS is the resulting key -> button view; a later owner wins a shared key.
 BINDINGS = {}
+local bindingOwners, bindingsOf = {}, {}
+local function RebuildBindings()
+	BINDINGS = {}
+	for _, owner in ipairs(bindingOwners) do
+		for key, button in pairs(bindingsOf[owner] or {}) do BINDINGS[key] = button end
+	end
+end
+function SetOverrideBindingClick(owner, _, key, button)
+	if IN_COMBAT then error("SetOverrideBindingClick is blocked in combat") end
+	if not bindingsOf[owner] then
+		bindingsOf[owner] = {}
+		table.insert(bindingOwners, owner)
+	end
+	bindingsOf[owner][key] = button
+	RebuildBindings()
+end
+function ClearOverrideBindings(owner)
+	if IN_COMBAT then error("ClearOverrideBindings is blocked in combat") end
+	bindingsOf[owner] = nil
+	for i, o in ipairs(bindingOwners) do
+		if o == owner then table.remove(bindingOwners, i) break end
+	end
+	RebuildBindings()
+end
 function GetLocale() return "enUS" end
 function geterrorhandler() return function(e) error(e, 0) end end
 function seterrorhandler() end
 function securecallfunction(f, ...) return f(...) end
-function hooksecurefunc() end
+-- hooksecurefunc(table, name, hook) or hooksecurefunc(name, hook): run hook after the original
+function hooksecurefunc(t, name, hook)
+	if type(t) ~= "table" then t, name, hook = _G, t, name end
+	local orig = t[name]
+	if type(orig) ~= "function" then return end -- not present on this (mock) client
+	rawset(t, name, function(...)
+		local r = { orig(...) }
+		hook(...)
+		return unpack(r)
+	end)
+end
+function IsAltKeyDown() return ALT_DOWN or false end
+
+-- A world map shaped like Blizzard_MapCanvas: a scroll container whose Child is the map
+-- layer, the cursor in 0-1 map coordinates, and OnMapChanged on every map switch.
+WorldMapFrame = CreateFrame("Frame", "WorldMapFrame", UIParent)
+WorldMapFrame:Hide()
+WorldMapFrame.mapID = 37
+function WorldMapFrame:GetMapID() return self.mapID end
+function WorldMapFrame:OnMapChanged() end
+-- Explored-area art and the zone highlight are pins at 2002-2009; icon pins come after.
+-- Frame levels as Blizzard_WorldMap registers them (2000 = default, one level per type in
+-- order): the area-covering layers end at MAP_HIGHLIGHT (2009), icon pins start at 2014.
+local PIN_LEVELS = {
+	PIN_FRAME_LEVEL_DEFAULT = 2000, PIN_FRAME_LEVEL_WOW_LABS_AREA = 2001, PIN_FRAME_LEVEL_MAP_EXPLORATION = 2002,
+	PIN_FRAME_LEVEL_PLUNDERSTORM_CIRCLE = 2003, PIN_FRAME_LEVEL_EVENT_OVERLAY = 2004,
+	PIN_FRAME_LEVEL_GARRISON_PLOT = 2005, PIN_FRAME_LEVEL_FOG_OF_WAR = 2006, PIN_FRAME_LEVEL_QUEST_BLOB = 2007,
+	PIN_FRAME_LEVEL_SCENARIO_BLOB = 2008, PIN_FRAME_LEVEL_MAP_HIGHLIGHT = 2009, PIN_FRAME_LEVEL_DIG_SITE = 2014,
+}
+function WorldMapFrame:GetPinFrameLevelsManager()
+	return { GetValidFrameLevel = function(_, kind) return PIN_LEVELS[kind] or PIN_LEVELS.PIN_FRAME_LEVEL_DEFAULT end }
+end
+-- Blizzard's own top-right buttons are moved elsewhere on the client we target: not there
+WorldMapFrame.WorldMapTrackingOptionsButton = false
+WorldMapFrame.WorldMapTrackingPinButton = false
+-- Navigation, as Blizzard_MapCanvas does it on a click: recorded in NAV for the tests
+function WorldMapFrame:ProcessCanvasClickHandlers() return false end
+function WorldMapFrame:NavigateToCursor() NAV = "cursor" return true end
+function WorldMapFrame:NavigateToParentMap() NAV = "parent" end
+function WorldMapFrame:SetMapID(id)
+	if id ~= self.mapID then
+		self.mapID = id
+		self:OnMapChanged()
+	end
+end
+WorldMapFrame.ScrollContainer = CreateFrame("ScrollFrame", nil, WorldMapFrame)
+WorldMapFrame.ScrollContainer.Child = CreateFrame("Frame", nil, WorldMapFrame.ScrollContainer)
+WorldMapFrame.ScrollContainer.Child:SetSize(1002, 668)
+function WorldMapFrame.ScrollContainer:ShouldNavigateOnClick() return true end
+function WorldMapFrame.ScrollContainer:CanPan() return MAP_ZOOMED == true end -- zoomed in: drags pan
+function WorldMapFrame.ScrollContainer:ShouldNavigateIgnoreZoneMapPositionData() return false end
+MAP_CURSOR = { 0.5, 0.5 }
+function WorldMapFrame.ScrollContainer:GetNormalizedCursorPosition() return MAP_CURSOR[1], MAP_CURSOR[2] end
 function GetAddOnInfo() return nil end
 
 C_AddOns = {

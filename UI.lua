@@ -42,7 +42,9 @@ ArtPad.C = C
 
 -- Keys bound while the window is open, and brush-size keys bound only while the mouse is
 -- over the canvas.
-ArtPad.windowKeys = { ESCAPE = "ArtPad_CloseButton", ["CTRL-Z"] = "ArtPad_UndoButton" }
+-- Both go to hidden click targets that decide where the key belongs (see OnKey): the
+-- window, or the world map's drawing tools when those are out.
+ArtPad.windowKeys = { ESCAPE = "ArtPad_KeyEsc", ["CTRL-Z"] = "ArtPad_KeyUndo" }
 ArtPad.canvasKeys = { ["["] = "ArtPad_BrushSmaller", ["]"] = "ArtPad_BrushBigger" }
 
 --[[ Small widget helpers ]]
@@ -164,6 +166,7 @@ end
 function ArtPad:SetBrushSize(n)
 	ArtPad_Settings.BrushSize = math.max(1, math.min(self.MAX_WIDTH, math.floor(n)))
 	if self.RefreshInspector then self:RefreshInspector() end
+	if self.WorldMapRefreshBar then self:WorldMapRefreshBar() end
 end
 
 function ArtPad:SetColor(r, g, b, a)
@@ -171,6 +174,7 @@ function ArtPad:SetColor(r, g, b, a)
 	c.r, c.g, c.b, c.a = r, g, b, a
 	ArtPad_Settings.Color = { r = r, g = g, b = b, a = a }
 	if self.RefreshInspector then self:RefreshInspector() end
+	if self.WorldMapRefreshBar then self:WorldMapRefreshBar() end
 end
 
 function ArtPad:OpenColorPicker()
@@ -195,6 +199,7 @@ function ArtPad:OpenColorPicker()
 			swatchFunc = Apply,
 			opacityFunc = Apply,
 			cancelFunc = function(prev)
+				self.pickerOpen = nil -- cancelled: not a colour to remember
 				self:SetColor(prev.r, prev.g, prev.b, prev.opacity or prev.a or c.a)
 			end,
 		})
@@ -204,10 +209,13 @@ function ArtPad:OpenColorPicker()
 		ColorPickerFrame.previousValues = { c.r, c.g, c.b, c.a }
 		ColorPickerFrame.func, ColorPickerFrame.opacityFunc = Apply, Apply
 		ColorPickerFrame.cancelFunc = function(prev)
+			self.pickerOpen = nil
 			self:SetColor(unpack(prev))
 		end
+		self.pickerOpen = nil -- so re-opening an open picker doesn't count as closing it
 		ColorPickerFrame:Hide() -- re-run OnShow
 		ColorPickerFrame:Show()
+		self.pickerOpen = true
 	end
 	ColorPickerFrame:SetFrameStrata("FULLSCREEN_DIALOG")
 end
@@ -382,13 +390,25 @@ function ArtPad:EndInteraction()
 	elseif state == "LASER" then
 		self:EndLaser()
 	elseif state == "PAN" then
+		-- Only a pan that moved something is a view worth saving: a plain right-click must
+		-- not turn a fitted canvas into a custom view.
+		local p = self.panStart
 		self.panStart = nil
-		self:SaveView()
+		if p and (self.view[2] ~= p[3] or self.view[3] ~= p[4]) then self:SaveView() end
 	end
-	if state ~= "TEXT" then
+	if state == "PAN" and self.panFrom == "TEXT" and self.pendingText then
+		self.state = "TEXT" -- panning while placing text goes back to placing it
+	elseif state ~= "TEXT" then
 		self.state = "SLEEP"
 	end
+	self.panFrom, self.dragButton = nil, nil
 	self:RequestRefresh()
+end
+
+-- Is the mouse in the middle of a drag (drawing, erasing, a shape, the laser, panning)?
+function ArtPad:IsDragging()
+	local state = self.state
+	return state ~= nil and state ~= "SLEEP" and state ~= "TEXT"
 end
 
 -- Drawing tools pin the cursor to the nearest canvas edge, so a click or drag in the margin
@@ -405,12 +425,17 @@ function ArtPad.OnMouseDown(_, button)
 	if button == "RightButton" or button == "MiddleButton" then
 		local mx, my = GetCursorPosition()
 		self.panStart = { mx, my, self.view[2], self.view[3] }
+		self.panFrom = self.state
 		self.state = "PAN"
+		self.dragButton = button
+		if self.stampGhost then self.stampGhost:Hide() end
 		return
 	end
 	local x, y = CursorOnCanvas(self.mainFrame)
 	if button ~= "LeftButton" then return end
-	local erasing = self.tool == "eraser"
+	self.dragButton = button
+	-- Only the eraser works off the canvas; placing text is pinned like drawing is.
+	local erasing = self.state ~= "TEXT" and self.tool == "eraser"
 	if not erasing then x, y = PinToCanvas(x, y) end
 	self.lastX, self.lastY = x, y
 	if self.state == "TEXT" then
@@ -433,6 +458,7 @@ function ArtPad.OnMouseDown(_, button)
 			self:BeginLaser(x, y)
 		else
 			self.state = "SHAPE"
+			self.shapeTool = tool -- the shape being dragged, whatever is selected meanwhile
 			self.shapeStart = { x, y }
 			self:UpdateShapePreview(x, y)
 		end
@@ -440,8 +466,11 @@ function ArtPad.OnMouseDown(_, button)
 	end
 end
 
-function ArtPad.OnMouseUp()
-	ArtPad:EndInteraction()
+-- Only the button that started a drag ends it: bumping another button mid-stroke doesn't.
+function ArtPad.OnMouseUp(_, button)
+	local self = ArtPad
+	if self:IsDragging() and button and self.dragButton and button ~= self.dragButton then return end
+	self:EndInteraction()
 end
 
 function ArtPad.OnUpdate()
@@ -464,7 +493,12 @@ function ArtPad.OnUpdate()
 	end
 	if state == "SLEEP" then
 		if self.tool == "stamp" then
-			self:UpdateStampGhost(PinToCanvas(CursorOnCanvas(self.mainFrame)))
+			-- where a click would put the marker; nothing once the mouse is off the canvas area
+			if self.viewport:IsMouseOver() then
+				self:UpdateStampGhost(PinToCanvas(CursorOnCanvas(self.mainFrame)))
+			else
+				self.stampGhost:Hide()
+			end
 		end
 		return
 	end
@@ -526,6 +560,7 @@ function ArtPad:PaintTo(x, y)
 	end
 	local ex, ey = At(t1)
 	local s = self.currentStroke
+	if not s then return end -- the canvas is full: nothing was started
 	if ex ~= s.px[s.n] or ey ~= s.py[s.n] then
 		self:ExtendStroke(ex, ey)
 	end
@@ -542,35 +577,84 @@ end
 
 --[[ Keyboard shortcuts ]]
 
-function ArtPad:BindCanvasKeys(on)
-	if InCombatLockdown() then return end
-	local owner = self.viewport
-	ClearOverrideBindings(owner)
-	if on then
+-- Make the override bindings match what is on screen: the window's keys while it is shown,
+-- the canvas keys while the mouse is over the canvas area. Bindings can't change in combat,
+-- so they are all released as combat starts (Core.lua) and put back here when it ends:
+-- nothing can stay bound to a window that was closed mid-fight.
+function ArtPad:SyncBindings()
+	if InCombatLockdown() or not self.window then return end
+	ClearOverrideBindings(self.window)
+	ClearOverrideBindings(self.viewport)
+	if not self.window:IsShown() then return end
+	for key, button in pairs(self.windowKeys) do
+		SetOverrideBindingClick(self.window, true, key, button)
+	end
+	if self.viewportHovered then
 		for key, button in pairs(self.canvasKeys) do
-			SetOverrideBindingClick(owner, false, key, button)
+			SetOverrideBindingClick(self.viewport, false, key, button)
 		end
 	end
+end
+
+function ArtPad:ReleaseBindings()
+	if InCombatLockdown() or not self.window then return end
+	ClearOverrideBindings(self.window)
+	ClearOverrideBindings(self.viewport)
+end
+
+function ArtPad:BindCanvasKeys(on)
+	self.viewportHovered = on and true or false
+	self:SyncBindings()
+end
+
+-- Where a shared key (Esc, Ctrl-Z) belongs: "map" while the world map's drawing tools are out,
+-- "window" while the ArtPad window is open; with both, whichever the mouse is over.
+function ArtPad:KeyTarget()
+	local wm = self.worldMapDraw
+	local mapOn = wm and wm.ready and wm.on and WorldMapFrame:IsShown() or false
+	local winOn = self.window and self.window:IsShown() or false
+	if mapOn and winOn then
+		if self.window:IsMouseOver() then return "window" end
+		return "map"
+	end
+	return mapOn and "map" or (winOn and "window" or nil)
+end
+
+function ArtPad:OnKey(key)
+	local target = self:KeyTarget()
+	if target == "map" then
+		if key == "esc" then self:WorldMapEsc() else self:WorldMapUndo() end
+	elseif target == "window" then
+		if key == "esc" then self.buttons.Back() else self:Undo() end
+	end
+	-- neither is up: a binding that outlived its owner. Do nothing.
 end
 
 --[[ Show / hide ]]
 
 function ArtPad.OnShow()
 	local self = ArtPad
-	if not InCombatLockdown() then
-		for key, button in pairs(self.windowKeys) do
-			SetOverrideBindingClick(self.window, true, key, button)
-		end
-	end
+	self:SyncBindings()
 	self:SetLauncherActive(false)
 	self:RequestRefresh()
+	-- something that needed an answer came up while the window was closed
+	local pending = self.pendingToast
+	if pending then
+		self.pendingToast = nil
+		self:Notify(pending[1], pending[2], pending[3])
+	end
 end
 
 function ArtPad.OnHide()
 	local self = ArtPad
-	if not InCombatLockdown() then
-		ClearOverrideBindings(self.window)
-		ClearOverrideBindings(self.viewport)
+	self.viewportHovered = false
+	self:SyncBindings()
+	-- a resize or move cut short by the window hiding still counts
+	self:StopResize()
+	if self.movingWindow then
+		self.movingWindow = nil
+		self.window:StopMovingOrSizing()
+		self:SaveWindow()
 	end
 	self:EndInteraction()
 	self:EndTextPlacement()
@@ -618,6 +702,7 @@ end
 ArtPad.buttons = {
 	Text = function()
 		local self = ArtPad
+		if self:IsDragging() then self:EndInteraction() end
 		self:EndTextPlacement()
 		if self.textInput:IsShown() then -- the Text button toggles the box
 			self.textInput:Hide()
@@ -627,7 +712,7 @@ ArtPad.buttons = {
 		self.textInput:Show()
 		self.textInput:SetFocus()
 		self.textInputHint = true
-		self:Notify("Type, then press Enter. Esc to cancel.", "info", { duration = false })
+		self:Notify("Type, then press Enter. Esc to cancel.", "info", { duration = false, owner = "text" })
 	end,
 	Undo = function() ArtPad:Undo() end,
 	Clear = function()
@@ -648,10 +733,16 @@ ArtPad.buttons = {
 	Center = function() ArtPad:ResetPosition() end,
 	Map = function() ArtPad:ToggleMap() end,
 	Options = function() ArtPad:OpenOptions() end,
-	Close = function()
+	-- The title bar's button: always hides.
+	Hide = function() ArtPad.window:Hide() end,
+	-- Escape backs out one step: a drag in progress, the colour picker, text placement,
+	-- popovers, a special tool, and only then the window.
+	Back = function()
 		local self = ArtPad
-		-- Escape backs out of text placement, popovers or a special tool before closing.
-		if self.state == "TEXT" then
+		if self:IsDragging() then self:EndInteraction() end
+		if self.pickerOpen and ColorPickerFrame and ColorPickerFrame:IsShown() then
+			ColorPickerFrame:Hide()
+		elseif self.state == "TEXT" then
 			self:EndTextPlacement()
 		elseif self:ClosePopovers() then
 			return
@@ -662,6 +753,7 @@ ArtPad.buttons = {
 		end
 	end,
 }
+ArtPad.buttons.Close = ArtPad.buttons.Back -- older name
 
 -- Hide any open popover; returns true if one was open.
 function ArtPad:ClosePopovers()
@@ -710,7 +802,7 @@ function ArtPad:ResetAllFramePositions()
 	ArtPad_Settings.FramePositions.window = nil
 	ArtPad_Settings.WindowSize = nil
 	self:RestoreWindow()
-	self:FitToView()
+	self:ResetPosition() -- fitted, and saved as fitted
 end
 
 function ArtPad:ApplyResizeBounds()
@@ -823,8 +915,12 @@ function ArtPad:SetupUI()
 	Background(title, C.bar)
 	title:EnableMouse(true)
 	title:RegisterForDrag("LeftButton")
-	title:SetScript("OnDragStart", function() win:StartMoving() end)
+	title:SetScript("OnDragStart", function()
+		self.movingWindow = true
+		win:StartMoving()
+	end)
 	title:SetScript("OnDragStop", function()
+		self.movingWindow = nil
 		win:StopMovingOrSizing()
 		win:SetUserPlaced(false) -- saved by us
 		self:SaveWindow()
@@ -841,7 +937,14 @@ function ArtPad:SetupUI()
 	self.titleNote:SetPoint("LEFT", name, "RIGHT", 10, 0)
 
 	-- right side, from the edge inwards
-	local hide = IconButton(title, "ArtPad_CloseButton", "Hide", "Esc", self.buttons.Close)
+	local hide = IconButton(title, "ArtPad_CloseButton", "Hide", "Esc", self.buttons.Hide)
+	-- Hidden click targets for Esc and Ctrl-Z (see OnKey)
+	local keyEsc = CreateFrame("Button", "ArtPad_KeyEsc", win)
+	keyEsc:SetScript("OnClick", function() self:OnKey("esc") end)
+	keyEsc:Hide()
+	local keyUndo = CreateFrame("Button", "ArtPad_KeyUndo", win)
+	keyUndo:SetScript("OnClick", function() self:OnKey("undo") end)
+	keyUndo:Hide()
 	hide:SetPoint("RIGHT", -8, 0)
 	self.DrawGlyph(hide, { { 3, 8, 13, 8 } }, 16, C.muted)
 	local options = IconButton(title, "ArtPad_OptionsButton", "Options", nil, self.buttons.Options)
@@ -1010,7 +1113,7 @@ function ArtPad:SetupUI()
 		box:ClearFocus()
 		if self.textInputHint then
 			self.textInputHint = nil
-			if self.state ~= "TEXT" then self:DismissToast() end
+			if self.state ~= "TEXT" then self:DismissToast("text") end
 		end
 	end)
 

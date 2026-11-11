@@ -39,6 +39,11 @@ local MAX_PIECES = 8
 local LINE_BUDGET, LINE_CAP = 11000, 14500
 ArtPad.LINE_BUDGET, ArtPad.LINE_CAP = LINE_BUDGET, LINE_CAP
 ArtPad.lineBudget, ArtPad.lineCap = LINE_BUDGET, LINE_CAP -- /ap bench nolimit lifts these
+-- Text and markers may go a little past the line cap (so a full canvas can still be
+-- labelled), but nothing goes past this: beyond 16384 the client draws none of it.
+local QUAD_CEILING = 15800
+ArtPad.QUAD_CEILING = QUAD_CEILING
+local STARVE_MARGIN = 200 -- free quads wanted before retrying what the cap refused
 ArtPad.linesInUse = 0
 ArtPad.quadsInUse = 0
 
@@ -117,31 +122,24 @@ end
 ArtPad.PointSegDist = PointSegDist
 ArtPad.SegSegDist = SegSegDist
 
---[[ Draw layers ]]
+--[[ Draw layer ]]
 
--- The client draws each frame's regions in batches with 16-bit vertex indices; a frame with
--- more than ~16k quads silently stops rendering *everything* on it. A long scribble easily
--- gets there (smooth segments are several lines each), so drawings are spread over child
--- frames of at most LAYER_SIZE regions. Pooled regions stay in the layer they were made in.
-local LAYER_SIZE = 2000
-ArtPad.LAYER_SIZE = LAYER_SIZE
-
+-- Everything drawn on the canvas lives on one child frame of it. (Spreading regions over
+-- several frames was tried against the client's ~16384-quad limit and measured to make no
+-- difference - the limit is shared - while it did let a newer stroke land on a lower frame
+-- than an older one once regions were reused.)
 function ArtPad:DrawLayer()
 	local layers = self.drawLayers
 	if not layers then
-		layers = {}
+		local layer = CreateFrame("Frame", nil, self.mainFrame)
+		layer:SetAllPoints(self.mainFrame)
+		layer:SetFrameLevel(self.mainFrame:GetFrameLevel() + 1)
+		layer.regions = 0
+		layers = { layer }
 		self.drawLayers = layers
 	end
-	local layer = layers[#layers]
-	if not layer or layer.regions >= LAYER_SIZE then
-		layer = CreateFrame("Frame", nil, self.mainFrame)
-		layer:SetAllPoints(self.mainFrame)
-		layer:SetFrameLevel(self.mainFrame:GetFrameLevel() + #layers + 1)
-		layer.regions = 0
-		tinsert(layers, layer)
-	end
-	layer.regions = layer.regions + 1
-	return layer
+	layers[1].regions = layers[1].regions + 1
+	return layers[1]
 end
 
 -- /ap stats: what the canvas holds versus what is actually on screen, for tracking down
@@ -178,12 +176,17 @@ end
 
 --[[ Region pools ]]
 
+-- Said once per time the canvas fills up (re-armed when space is freed).
+function ArtPad:WarnFull()
+	if self.warnedFull then return end
+	self.warnedFull = true
+	if self.Notify then self:Notify("The canvas is full.", "warn") end
+end
+
 function ArtPad:AcquireLine()
 	if self.quadsInUse >= self.lineCap then
-		if not self.warnedFull then
-			self.warnedFull = true
-			if self.Notify then self:Notify("The canvas is full. Clear or erase something to keep drawing.", "warn") end
-		end
+		self.starved = true -- something exists that isn't drawn: retried when space frees up
+		self:WarnFull()
 		return nil
 	end
 	self.linesInUse = self.linesInUse + 1
@@ -200,6 +203,10 @@ function ArtPad:AcquireLine()
 end
 
 function ArtPad:AcquireDot()
+	if self.quadsInUse >= self.lineCap then
+		self.starved = true
+		return nil
+	end
 	local dot = tremove(dotPool)
 	if not dot then
 		dot = self:DrawLayer():CreateTexture(nil, "ARTWORK", nil, 1)
@@ -251,9 +258,17 @@ ArtPad.SegAlive = SegAlive
 	same changes, so they hold the same time anyway. Housekeeping (loading a copy, switching
 	canvases, a local-only clear) happens "quietly" and doesn't count as a change: a loaded
 	copy keeps its own time, and an emptied canvas has time 0, so it never beats a real one.
+
+	Only a COMPLETE copy is stamped. A copy is incomplete until a sync has settled what the
+	shared canvas is (loaded someone's copy, kept ours, or found nobody else has one): after
+	login, after the canvas is emptied for a new audience, after a failed sync, and while
+	there is nobody to share with at all. A fragment - an empty canvas that has received one
+	live stroke - must never pass for the newest copy and overwrite everyone's full one, and
+	a doodle made alone must never outrank the canvas of a group joined afterwards.
 ]]
 
 ArtPad.canvasModified = 0
+ArtPad.copyComplete = false
 
 function ArtPad:ServerNow()
 	return GetServerTime and GetServerTime() or time()
@@ -262,7 +277,15 @@ end
 function ArtPad:Changed()
 	self.canvasVersion = self.canvasVersion + 1
 	self.refreshPending = true -- status bar, undo button and empty state follow the canvas
-	if (self.quiet or 0) == 0 then self.canvasModified = self:ServerNow() end
+	if (self.quiet or 0) == 0 and self.copyComplete then self.canvasModified = self:ServerNow() end
+end
+
+-- A sync has settled that this copy is the shared canvas (see above). If it holds things
+-- drawn while that was still open, they date from now.
+function ArtPad:MarkCopyComplete()
+	if self.copyComplete then return end
+	self.copyComplete = true
+	if #self.items > 0 and self.canvasModified == 0 then self.canvasModified = self:ServerNow() end
 end
 
 -- Run f(self, ...) without it counting as a change to the canvas.
@@ -277,6 +300,7 @@ end
 function ArtPad:ResetCanvas()
 	self:Quietly(self.ClearAll)
 	self.canvasModified = 0
+	self.copyComplete = false
 end
 
 -- Returns the stroke with this id, creating it if needed (nil if the id is another kind).
@@ -403,6 +427,7 @@ function ArtPad:UpdateDot(s, i)
 	if want then
 		if not dot then
 			dot = self:AcquireDot()
+			if not dot then return end -- canvas full: a missing cap is the least of it
 			s.dots[i] = dot
 		end
 		local size = math_max(s.w, 2)
@@ -437,7 +462,7 @@ function ArtPad:SetStrokePoint(s, i, x, y)
 end
 
 -- Past LINE_BUDGET lines, redraw every curve as straight segments so the canvas stays under
--- the client's limit. Goes back to curves once the canvas is cleared.
+-- the client's limit. Curves come back once enough has been removed (see AfterRemoval).
 function ArtPad:CheckLineBudget()
 	if self.coarse or self.quadsInUse <= self.lineBudget then return end
 	self.coarse = true
@@ -446,6 +471,43 @@ function ArtPad:CheckLineBudget()
 			for k = 1, item.n - 1 do self:RenderSegment(item, k) end
 		end
 	end
+end
+
+-- Draw whatever exists but has no region yet (refused while the canvas was full).
+function ArtPad:RenderMissing()
+	self.starved = false
+	for _, item in ipairs(self.items) do
+		if item.kind == "S" then
+			for k = 1, item.n - 1 do
+				local pieces = item.segs[k]
+				if SegAlive(item, k) and (not pieces or #pieces == 0) then self:RenderSegment(item, k) end
+			end
+			for k = 1, item.n do self:UpdateDot(item, k) end
+		elseif item.kind == "T" then
+			self:RenderText(item)
+		elseif item.kind == "M" then
+			self:RenderStamp(item)
+		end
+		if self.starved then return end -- full again
+	end
+end
+
+-- Something was removed: the limit modes may be able to step back.
+--   - the "canvas is full" notice is re-armed once there is room again;
+--   - straight-segment mode ends when even drawing every curve at full detail (MAX_PIECES
+--     lines per segment) couldn't reach the budget again, so it can't flip back and forth;
+--   - things the cap refused are drawn once there is room for them.
+function ArtPad:AfterRemoval()
+	if self.quadsInUse < self.lineCap then self.warnedFull = false end
+	if self.coarse and self.quadsInUse < self.lineBudget / MAX_PIECES then
+		self.coarse = false
+		for _, item in ipairs(self.items) do
+			if item.kind == "S" and item.smooth then
+				for k = 1, item.n - 1 do self:RenderSegment(item, k) end
+			end
+		end
+	end
+	if self.starved and self.quadsInUse < self.lineCap - STARVE_MARGIN then self:RenderMissing() end
 end
 
 -- segments: array of segment indices. Erasing every segment removes the stroke.
@@ -460,11 +522,16 @@ function ArtPad:EraseSegments(s, segments)
 	end
 	self:Changed()
 	if s.n > 1 then
+		local alive = false
 		for i = 1, s.n - 1 do
-			if SegAlive(s, i) then return end
+			if SegAlive(s, i) then alive = true break end
 		end
-		self:RemoveItem(s.id)
+		if not alive then
+			self:RemoveItem(s.id) -- which also runs AfterRemoval
+			return
+		end
 	end
+	self:AfterRemoval()
 end
 
 --[[ Texts ]]
@@ -472,22 +539,37 @@ end
 function ArtPad:AddText(id, author, x, y, text, color, size)
 	if self.itemsById[id] then return end
 	size = math_max(6, math_min(400, math_floor(tonumber(size) or 14)))
-	local fs = self:AcquireFontString()
-	fs:SetFont(self.FONT, size, "")
-	fs:SetJustifyH("LEFT")
-	fs:SetPoint("BOTTOMLEFT", self.mainFrame, "BOTTOMLEFT", x, y)
-	fs:SetTextColor(color.r, color.g, color.b, color.a)
-	fs:SetText(text)
-	Use(fs, #text) -- about one quad per glyph
 	local t = {
 		id = id, kind = "T", author = author,
 		x = x, y = y, text = text, r = color.r, g = color.g, b = color.b, a = color.a, size = size,
-		fs = fs, x2 = x + fs:GetStringWidth(), y2 = y + fs:GetStringHeight(),
+		-- a guess at its box until it is drawn (it may not be, on a full canvas)
+		x2 = x + #text * size * 0.6, y2 = y + size,
 	}
 	self.itemsById[id] = t
 	tinsert(self.items, t)
+	self:RenderText(t)
 	self:Changed()
 	return t
+end
+
+-- Give a text item its font string, if the canvas has room for it.
+function ArtPad:RenderText(t)
+	if t.fs then return true end
+	if self.quadsInUse + #t.text > QUAD_CEILING then
+		self.starved = true
+		self:WarnFull()
+		return false
+	end
+	local fs = self:AcquireFontString()
+	fs:SetFont(self.FONT, t.size, "")
+	fs:SetJustifyH("LEFT")
+	fs:SetPoint("BOTTOMLEFT", self.mainFrame, "BOTTOMLEFT", t.x, t.y)
+	fs:SetTextColor(t.r, t.g, t.b, t.a)
+	fs:SetText(t.text)
+	Use(fs, #t.text) -- about one quad per glyph
+	t.fs = fs
+	t.x2, t.y2 = t.x + fs:GetStringWidth(), t.y + fs:GetStringHeight()
+	return true
 end
 
 --[[ Stamps ]]
@@ -496,19 +578,34 @@ function ArtPad:AddStamp(id, author, key, x, y, size)
 	local def = self.STAMPS[key]
 	if self.itemsById[id] or not def then return end
 	size = math_max(8, math_min(512, math_floor(tonumber(size) or 40)))
+	local m = { id = id, kind = "M", author = author, key = key, x = x, y = y, size = size }
+	self.itemsById[id] = m
+	tinsert(self.items, m)
+	self:RenderStamp(m)
+	self:Changed()
+	return m
+end
+
+-- Give a marker its texture, if the canvas has room for it.
+function ArtPad:RenderStamp(m)
+	if m.tex then return true end
+	local def = self.STAMPS[m.key]
+	if not def then return true end
+	if self.quadsInUse + 1 > QUAD_CEILING then
+		self.starved = true
+		self:WarnFull()
+		return false
+	end
 	local tex = tremove(stampPool) or self:DrawLayer():CreateTexture(nil, "OVERLAY")
 	tex:SetTexture(def[1])
 	tex:SetTexCoord(def[2], def[3], def[4], def[5])
-	tex:SetSize(size, size)
+	tex:SetSize(m.size, m.size)
 	tex:ClearAllPoints()
-	tex:SetPoint("CENTER", self.mainFrame, "BOTTOMLEFT", x, y)
+	tex:SetPoint("CENTER", self.mainFrame, "BOTTOMLEFT", m.x, m.y)
 	Use(tex, 1)
 	tex:Show()
-	local m = { id = id, kind = "M", author = author, key = key, x = x, y = y, size = size, tex = tex }
-	self.itemsById[id] = m
-	tinsert(self.items, m)
-	self:Changed()
-	return m
+	m.tex = tex
+	return true
 end
 
 --[[ Removal ]]
@@ -520,7 +617,7 @@ local function ReleaseItem(item)
 		wipe(item.segs)
 		wipe(item.dots)
 	elseif item.kind == "M" then
-		Release(stampPool, item.tex)
+		if item.tex then Release(stampPool, item.tex) end
 		item.tex = nil
 	elseif item.fs then
 		Release(textPool, item.fs)
@@ -540,6 +637,16 @@ function ArtPad:RenameAuthor(old, new)
 		end
 		return id
 	end
+	-- Our own messages may already have come back under the new name (taken for someone
+	-- else's while the name wasn't known): those copies go, the originals take their ids.
+	local doubles = {}
+	for _, item in ipairs(self.items) do
+		local id = Rekey(item.id)
+		if id ~= item.id and self.itemsById[id] and self.itemsById[id] ~= item then
+			tinsert(doubles, id)
+		end
+	end
+	for _, id in ipairs(doubles) do self:RemoveItem(id) end
 	for _, item in ipairs(self.items) do
 		local id = Rekey(item.id)
 		if id ~= item.id then
@@ -550,6 +657,14 @@ function ArtPad:RenameAuthor(old, new)
 	end
 	for k, id in ipairs(self.undoStack) do self.undoStack[k] = Rekey(id) end
 	if self.currentStroke then self.currentStroke.id = Rekey(self.currentStroke.id) end
+	-- unsent strokes carry their id too, and what we sent during a sync is replayed by author
+	for _, entry in ipairs(self.outQueue or {}) do
+		if entry.stroke then entry.stroke.id = Rekey(entry.stroke.id) end
+	end
+	for _, entry in ipairs(self.syncBuffer or {}) do
+		if entry[2] == old then entry[2] = new end
+	end
+	if self.nameTags and self.nameTags[new] then self.nameTags[new]:Hide() end
 	self:Changed()
 end
 
@@ -565,6 +680,7 @@ function ArtPad:RemoveItem(id)
 		end
 	end
 	self:Changed()
+	self:AfterRemoval()
 end
 
 -- Clears the drawings (the backdrop map stays).
@@ -575,7 +691,8 @@ function ArtPad:ClearCanvas()
 	wipe(self.items)
 	wipe(self.itemsById)
 	wipe(self.undoStack)
-	self.coarse, self.warnedFull = false, false
+	self.coarse, self.warnedFull, self.starved = false, false, false
+	if self.SetLauncherActive then self:SetLauncherActive(false) end -- nothing new left to look at
 	self:Changed()
 end
 
@@ -654,10 +771,13 @@ end
 
 -- Undo your most recent stroke, text or stamp that still exists.
 function ArtPad:Undo()
+	-- A stroke still being drawn is finished first, so it is undone whole and for everyone,
+	-- instead of losing its item while the mouse keeps drawing it.
+	if self.IsDragging and self:IsDragging() then self:EndInteraction() end
 	while #self.undoStack > 0 do
 		local id = tremove(self.undoStack)
 		if self.itemsById[id] or (self.loopback and id:find(self.playerName .. ":", 1, true) == 1) then
-			local localId = id:sub(#self.playerName + 2)
+			local localId = id:match("^[^:]*:(.*)$") -- not by the name's length: the name can change
 			if not self.loopback then
 				self:RemoveItem(id)
 			end
@@ -723,12 +843,24 @@ function ArtPad:SerializeCanvas()
 		modified = self.canvasModified }
 end
 
+local LoadRecord
+
 local function LoadCanvasBody(self, snapshot)
 	self:ClearAll()
 	if self.SetBackdrop and tonumber(snapshot.map) and not self.node then
 		self:SetBackdrop(tonumber(snapshot.map), type(snapshot.mapOverlays) == "string" and snapshot.mapOverlays or "")
 	end
 	for _, rec in ipairs(snapshot.items) do
+		if type(rec) == "table" then
+			local ok, err = pcall(LoadRecord, self, rec)
+			if not ok then self:Debug("skipped a bad item in the canvas copy: " .. tostring(err)) end
+		end
+	end
+end
+
+-- One item of a canvas copy. A malformed one is skipped (see LoadCanvasBody), not fatal.
+function LoadRecord(self, rec)
+	do
 		local id, kind, author, color = rec[1], rec[2], rec[3], self.ParseColor(rec[4])
 		if type(id) == "string" and type(author) == "string" and color and not self.itemsById[id] then
 			if kind == "S" then

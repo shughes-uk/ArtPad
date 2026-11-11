@@ -16,6 +16,7 @@ local SWATCHES = {
 	{ 0.95, 0.95, 0.96 }, { 1, 0.42, 0.37 }, { 0.96, 0.63, 0.26 }, { 0.95, 0.82, 0.29 }, { 0.33, 0.78, 0.44 },
 	{ 0.25, 0.78, 0.92 }, { 0.30, 0.55, 1 }, { 0.69, 0.49, 1 }, { 0.96, 0.55, 0.73 }, { 0.11, 0.12, 0.13 },
 }
+ArtPad.SWATCHES = SWATCHES -- also used by the world map's colour pop-out
 local PRESETS = { 2, 5, 8, 13 }
 local LASER_HOLD, LASER_FADE = 1.2, 0.6
 
@@ -110,7 +111,7 @@ function ArtPad:UpdateShapePreview(x, y)
 	local start = self.shapeStart
 	if not start then return end
 	self.shapeEnd = { x, y }
-	local pts = self:ShapePoints(self.tool, start[1], start[2], x, y, self:BrushWidth())
+	local pts = self:ShapePoints(self.shapeTool or self.tool, start[1], start[2], x, y, self:BrushWidth())
 	if pts and #pts >= 4 then
 		self:ShowPolylinePreview(pts)
 	else
@@ -125,7 +126,8 @@ function ArtPad:FinishShape()
 	if not (start and finish) then return end
 	local dx, dy = finish[1] - start[1], finish[2] - start[2]
 	if dx * dx + dy * dy < 16 then return end -- a click, not a drag
-	local pts = self:ShapePoints(self.tool, start[1], start[2], finish[1], finish[2], self:BrushWidth())
+	local pts = self:ShapePoints(self.shapeTool or self.tool, start[1], start[2], finish[1], finish[2], self:BrushWidth())
+	self.shapeTool = nil
 	if pts then self:DrawShape(pts) end
 end
 
@@ -185,6 +187,7 @@ local function FadeLaser(fader)
 end
 
 function ArtPad:BeginLaser(x, y)
+	if self.laser then self.laser.done = true end -- never leave an unfinished entry in the queue
 	local l = { localId = self:NewLocalId(), px = { x }, py = { y }, n = 1, sent = 0 }
 	self.laser = l
 	self:Enqueue({ laser = l })
@@ -214,6 +217,8 @@ end
 --[[ Tool selection ]]
 
 function ArtPad:SetTool(tool, stampKey)
+	-- changing tools ends whatever the mouse was in the middle of with the old one
+	if self.IsDragging and self:IsDragging() then self:EndInteraction() end
 	if tool == "text" then
 		self.buttons.Text()
 		return
@@ -304,6 +309,7 @@ local function RailButton(self, parent, name, title, key, onClick)
 	ArtPad.Tooltip(b, key and (title .. "  |cff9aa3ad" .. key .. "|r") or title)
 	return b
 end
+ArtPad.GLYPHS = GLYPHS -- the world map toolbar reuses these
 
 function ArtPad:SetupTools()
 	self.shapePreviewLines = {}
@@ -741,8 +747,11 @@ function ArtPad:SetupSharing()
 		fs:SetText(label)
 		local s = self:Switch(pop, name, function() return ArtPad_Settings[key] and true or false end,
 			function(v)
+				if key == "AdminOnly" then
+					self:SetAdminOnly(v) -- also fetches the canvas again to match
+					return
+				end
 				ArtPad_Settings[key] = v
-				if key == "AdminOnly" then self.guildRanks = nil end
 				self:RefreshOptions()
 				self:RequestRefresh()
 			end)

@@ -32,7 +32,7 @@ local ArtPad = ArtPad
 local LibDeflate = LibStub("LibDeflate")
 local ShortName = ArtPad.ShortName
 local NUM = ArtPad.NUM
-local tinsert = table.insert
+local tinsert, tremove = table.insert, table.remove
 
 -- The server lets each addon prefix send a burst of 10 messages, then 1 per second
 -- (patch 10.2.7 / 4.4.0, all chat types). Message count is what's limited, not bytes, so
@@ -41,6 +41,7 @@ local BUDGET_MAX, BUDGET_RATE = 10, 1
 local FAST_FLUSH, SLOW_FLUSH = 0.3, 1.0 -- seconds between flushes with / without spare budget
 local MAX_MESSAGE = 250 -- bytes; longer messages get split into several (each one counts)
 local SYNC_COLLECT = 2.5 -- seconds to wait for canvas offers
+local MAP_RACE = 3 -- seconds within which two map changes count as simultaneous
 
 -- Streaming simplification: drop points that lie (almost) on the line between their
 -- neighbours. Both the sender and receivers draw the simplified points.
@@ -145,7 +146,26 @@ function ArtPad:SetupComm()
 		table.insert(self.dataPrefixes, prefix)
 		self:RegisterComm(prefix, "OnDataMessage")
 	end
-	self:Broadcast(self.versionPrefix, tostring(self.version), "BULK")
+	-- Older protocols' channels: only to notice people who can't see us (see OnOldProtocol).
+	self.peerVersions = {}
+	for p = 4, tonumber(self.protocolVersion) - 1 do
+		self:RegisterComm("ArtPad" .. p, "OnOldProtocol")
+		self:RegisterComm("ArtPadS" .. p, "OnOldProtocol")
+	end
+end
+
+-- Say which version we run to the guild and the group (whatever the sharing mode), so
+-- anyone on an older version gets told to update. Login is too early (the guild isn't known
+-- yet), so this runs a few seconds after entering the world and on joining a group.
+function ArtPad:AnnounceVersion()
+	if IsInGuild() then
+		self:SendCommMessage(self.versionPrefix, tostring(self.version), "GUILD", nil, "BULK")
+	end
+	local group = (LE_PARTY_CATEGORY_INSTANCE and IsInGroup(LE_PARTY_CATEGORY_INSTANCE) and "INSTANCE_CHAT")
+		or (IsInRaid() and "RAID") or (IsInGroup() and "PARTY") or nil
+	if group then
+		self:SendCommMessage(self.versionPrefix, tostring(self.version), group, nil, "BULK")
+	end
 end
 
 --[[ Channels ]]
@@ -172,7 +192,8 @@ function ArtPad:AcceptsDistribution(disType)
 	if ArtPad_Settings.Mode == "GUILD" then
 		return disType == "GUILD"
 	end
-	return disType == "RAID" or disType == "PARTY" or disType == "INSTANCE_CHAT"
+	-- group mode: only the channel we send on (not the home party while in an instance group)
+	return disType ~= nil and disType == self:GetChannel()
 end
 
 -- onSent(_, bytesSent, totalBytes) is called as the message actually goes out.
@@ -189,13 +210,27 @@ function ArtPad:Broadcast(prefix, msg, prio, onSent)
 	end
 end
 
+-- Loopback is an audience of its own (just you): it starts from an empty canvas, is never
+-- offered to anyone, and the real canvas is fetched again when it is switched off.
 function ArtPad:SetLoopback(on)
+	on = on and true or false
+	if on == (self.loopback and true or false) then return end
+	if self.node then self:LeavePlace(true) end
+	self:SwitchScope()
 	self.loopback = on
+	self.loopbackHeard = nil
+	self:ResetCanvas()
 	if on then
 		self:Notify("Loopback on: your drawing goes through the server and back to only you.", "info")
 	else
 		self:Notify("Loopback off.", "info")
+		if ArtPad_Settings.Mode == "LOCAL" then
+			self:CheckPlaces()
+		else
+			self:StartSync("loopback off")
+		end
 	end
+	if self.RefreshOptions then self:RefreshOptions() end
 	self:RequestRefresh()
 end
 
@@ -209,6 +244,11 @@ function ArtPad:GetGuildRank(name)
 			if member then
 				self.guildRanks[ShortName(member)] = rankIndex
 			end
+		end
+		-- the roster hasn't arrived yet: don't remember "nobody is an officer"
+		if next(self.guildRanks) == nil then
+			self.guildRanks = nil
+			return nil
 		end
 	end
 	return self.guildRanks[ShortName(name)]
@@ -253,6 +293,25 @@ end
 -- Low-level: put one message (one or more newline-separated commands) on the wire.
 -- Everything goes through the outgoing queue below, which decides when to call this.
 function ArtPad:SendLive(msg, prio)
+	-- Until our name as others see it is known, remember what we sent: our own messages
+	-- coming back are recognised by their content instead (see OnLiveMessage).
+	if not self.learnedName then
+		local sent = self.sentRecently or { n = 0 }
+		self.sentRecently = sent
+		sent.n = sent.n % 32 + 1
+		if sent[sent.n] then sent[sent[sent.n]] = nil end
+		sent[sent.n], sent[msg] = msg, true
+	end
+	if self.loopback and not self.loopbackHeard and not self.loopbackWatch then
+		-- loopback only shows what comes back: say so if nothing does
+		self.loopbackWatch = true
+		C_Timer.After(5, function()
+			self.loopbackWatch = nil
+			if self.loopback and not self.loopbackHeard then
+				self:Notify("Loopback is not responding. Join a guild or group and try again.", "warn")
+			end
+		end)
+	end
 	if self.syncing then
 		-- Replayed after a snapshot arrives so our own work isn't lost.
 		tinsert(self.syncBuffer, { msg, self.playerName })
@@ -406,6 +465,14 @@ end
 -- smooth: freehand (rendered as a curve, points simplified while drawing); false for shapes.
 function ArtPad:BeginStroke(x, y, smooth)
 	if smooth == nil then smooth = true end
+	-- Whatever happened to the previous stroke, it is finished now: a queue entry that never
+	-- completes would hold back everything queued after it.
+	if self.currentStroke then self.currentStroke.done = true end
+	self.currentStroke = nil
+	if self.quadsInUse >= self.lineCap then
+		self:WarnFull() -- nothing more fits: don't create (and send) a stroke nobody can see
+		return
+	end
 	local c = self.brushColor
 	local s = {
 		localId = self:NewLocalId(),
@@ -420,12 +487,37 @@ function ArtPad:BeginStroke(x, y, smooth)
 	self:Enqueue({ stroke = s })
 end
 
-function ArtPad:MirrorStrokePoint(i)
+function ArtPad:MirrorStrokePoint(i, s)
 	if self.loopback then return end
-	local s = self.currentStroke
+	s = s or self.currentStroke
 	local item = self:GetStroke(s.id, self.playerName, s, s.w, s.smooth)
 	if item then
 		self:SetStrokePoint(item, i, s.px[i], s.py[i])
+	end
+end
+
+-- Put our own not-yet-sent work back on the canvas after a copy was loaded over it: it is
+-- still going out to everyone, so it has to be here too.
+function ArtPad:ReapplyQueue()
+	if self.loopback then return end
+	for _, entry in ipairs(self.outQueue) do
+		if entry.stroke then
+			local s = entry.stroke
+			for i = 1, s.n do self:MirrorStrokePoint(i, s) end
+		elseif entry.erase then
+			for id, segs in pairs(entry.erase) do
+				local item = self.itemsById[id]
+				if item and segs == true then
+					self:RemoveItem(id)
+				elseif item and item.kind == "S" then
+					local list = {}
+					for i in pairs(segs) do tinsert(list, i) end
+					self:EraseSegments(item, list)
+				end
+			end
+		elseif entry.cmd then
+			self:ApplyLive(entry.cmd, self.playerName, true)
+		end
 	end
 end
 
@@ -506,6 +598,7 @@ end
 function ArtPad:DrawShape(points)
 	if #points < 4 then return end
 	self:BeginStroke(points[1], points[2], false)
+	if not self.currentStroke then return end -- canvas full
 	for k = 3, #points, 2 do
 		self:CommitPoint(points[k], points[k + 1])
 	end
@@ -514,6 +607,10 @@ end
 
 function ArtPad:PlaceStamp(key, x, y)
 	if not self.STAMPS[key] then return end
+	if self.quadsInUse + 1 > self.QUAD_CEILING then
+		self:WarnFull()
+		return
+	end
 	local localId = self:NewLocalId()
 	local id = self.playerName .. ":" .. localId
 	local size = self:GetStampSize()
@@ -530,6 +627,7 @@ function ArtPad:ShareBackdrop(mapID, overlays)
 	if not self.loopback then
 		self.backdropBy = mapID and "you" or nil
 		self:SetBackdrop(mapID, overlays)
+		self.backdropFrom, self.backdropAt = self.playerName, GetTime()
 	end
 	self:QueueCommand("B(" .. (mapID or 0) .. (overlays ~= "" and (";" .. overlays) or "") .. ")")
 end
@@ -564,6 +662,10 @@ end
 function ArtPad:PlaceText(x, y, text)
 	text = text:gsub("[\r\n]", " ")
 	if text == "" then return end
+	if self.quadsInUse + #text > self.QUAD_CEILING then
+		self:WarnFull()
+		return
+	end
 	local localId = self:NewLocalId()
 	local c = self.brushColor
 	local id = self.playerName .. ":" .. localId
@@ -575,13 +677,23 @@ function ArtPad:PlaceText(x, y, text)
 	self:QueueCommand(("T(%s,%d,%d,%s,%d;%s)"):format(localId, x, y, self.ColorString(c), size, text))
 end
 
-function ArtPad:ClearForEveryone()
+-- Forget drawing that hasn't been sent yet (it is being cleared anyway). A queued map change
+-- is kept: a clear doesn't touch the map.
+function ArtPad:DropUnsentDrawing()
+	if self.currentStroke then self.currentStroke.done = true end
 	self.currentStroke = nil
+	local q = self.outQueue
+	for i = #q, 1, -1 do
+		local cmd = q[i].cmd
+		if not (cmd and cmd:sub(1, 2) == "B(") then tremove(q, i) end
+	end
+end
+
+function ArtPad:ClearForEveryone()
 	if not self.loopback then
 		self:ClearCanvas()
 	end
-	-- Anything still queued is about to be cleared anyway
-	wipe(self.outQueue)
+	self:DropUnsentDrawing()
 	self:QueueCommand("X()")
 end
 
@@ -682,6 +794,14 @@ function ArtPad:ApplyLive(msg, author, isReplay, anonymous)
 		local id, overlays = body:match("^(%d+);?(.*)$")
 		local mapID = tonumber(id)
 		if mapID then
+			-- Two people changing the map at the same moment: everyone keeps the same one, the
+			-- one from whoever's name sorts first, whatever order the two messages arrive in.
+			local now = GetTime()
+			if not isReplay and self.backdropFrom and self.backdropFrom ~= author
+					and now - (self.backdropAt or 0) < MAP_RACE and self.backdropFrom < author then
+				return
+			end
+			if not isReplay then self.backdropFrom, self.backdropAt = author, now end
 			self.backdropBy = mapID ~= 0 and (anonymous and "someone" or author) or nil
 			self:SetBackdrop(mapID ~= 0 and mapID or nil, overlays)
 			if fromOther then
@@ -690,6 +810,8 @@ function ArtPad:ApplyLive(msg, author, isReplay, anonymous)
 		end
 	elseif kind == "L" then
 		if isReplay then return end -- lasers are momentary
+		-- ...and their lines only fade while the canvas is on screen: don't pile them up unseen
+		if not self.mainFrame:IsVisible() then return end
 		local lid, start, pts = body:match("^([^,]+),(%d+);(.*)$")
 		local xs, ys
 		if pts then xs, ys = self.DecodePoints(pts) end
@@ -709,6 +831,10 @@ function ArtPad:ApplyLive(msg, author, isReplay, anonymous)
 		self:RemoveItem(author .. ":" .. body)
 	elseif kind == "X" then
 		self:ClearCanvas()
+		-- Someone cleared: what we had drawn but not sent is gone here, so it must not go out
+		-- afterwards. A stroke still under the pen starts afresh from where the pen is now,
+		-- with the same beginning (and an undo step) for everyone.
+		if fromOther then self:DropUnsentDrawing() end
 		if fromOther then
 			self:Notify(author .. " cleared the canvas.", "info")
 		end
@@ -718,8 +844,16 @@ end
 function ArtPad:OnLiveMessage(prefix, msg, disType, sender)
 	local author = ShortName(sender)
 	local me = self:RefreshPlayerName()
+	-- Our own message, back from the server, before we know the name it travels under
+	-- (a surname on WoW Forever): learn the name from it instead of taking it for someone's.
+	if not self.learnedName and author ~= me and self.sentRecently and self.sentRecently[msg]
+			and self:LooksLikeMe(sender) then
+		self:LearnOwnName(sender)
+		me = self.playerName
+	end
 	if self.loopback then
 		if disType ~= "WHISPER" or author ~= me then return end
+		self.loopbackHeard = true
 	elseif author == me or not self:AcceptsDistribution(disType) or not self:ValidateSender(sender) then
 		return
 	end
@@ -763,16 +897,49 @@ function ArtPad:GetSnapshotData()
 	return cache.data
 end
 
+-- A fresh id for a canvas request. A client recognises its own request coming back by this id
+-- alone (its full name may not be known yet), so two players must never produce the same
+-- one: besides the random part it is mixed with who is asking and when, and so doesn't depend
+-- on every client's random numbers starting out differently.
+function ArtPad:NewSyncNonce()
+	local seed = (UnitGUID("player") or "") .. (self.playerName or "") .. tostring(GetTime()) .. tostring(time())
+	local h = math.random(0, 0xFFFFFF)
+	for i = 1, #seed do
+		h = (h * 33 + seed:byte(i)) % 0x1000000
+	end
+	return string.format("%06x", h)
+end
+
+-- Drop a sync in progress and everything armed for it.
+function ArtPad:AbortSync()
+	self.syncing = false
+	self.syncNonce, self.syncToken, self.syncPhase = nil, nil, nil
+	self.syncSource, self.syncOffer, self.syncProgress, self.syncChunks = nil, nil, nil, nil
+	self.syncOffers, self.syncBuffer = {}, {}
+	self.syncTried = false
+	self.newerCopyPending, self.resyncWanted = nil, nil
+	if self.RequestRefresh then self:RequestRefresh() end
+end
+
+-- Returns true if a sync is now running.
 function ArtPad:StartSync(reason)
-	if self.syncing then return end
+	if self.syncing then return true end
+	if self.loopback then return false end
 	local channel = self:GetChannel()
 	if not channel then
 		self:Debug("sync (" .. reason .. "): nobody to sync with")
-		return
+		-- Still wanted: the guild or group may simply not be known yet (it isn't for a few
+		-- seconds after login). Core.lua retries when one turns up.
+		self.wantSync = true
+		if self.resyncKeep then self:RestoreKept() end
+		return false
 	end
+	self.wantSync = nil
 	self:Debug("sync start: " .. reason)
 	self.syncing = true
-	self.syncNonce = string.format("%06x", math.random(0, 0xFFFFFF))
+	self.syncTried = false
+	self.syncSource, self.syncOffer, self.syncChunks = nil, nil, nil
+	self.syncNonce = self:NewSyncNonce()
 	self.syncOffers = {}
 	self.syncBuffer = {}
 	self.syncPhase = "searching"
@@ -797,19 +964,25 @@ function ArtPad:RequestSnapshot(nonce)
 			best = offer
 		end
 	end
-	-- Newest copy wins - and that may be the one we already have.
-	if best and self.syncOurs and not self.NewerCopy(best, self.syncOurs) then
-		self:Debug("sync: our copy is the newest")
-		self:FinishSync(nil, nil, nil, true)
-		return
+	-- Newest copy wins - and that may be the one we already have. Sizes aren't compared with
+	-- our own copy, so an exact tie falls to the name on both sides alike.
+	if best and self.syncOurs then
+		self.syncOurs.bytes = best.bytes
+		if not self.NewerCopy(best, self.syncOurs) then
+			self:Debug("sync: our copy is the newest")
+			self:FinishSync(nil, nil, nil, true)
+			return
+		end
 	end
 	if not best then
 		self:Debug("sync: no (more) canvas offers")
 		-- Everyone we asked failed us: say so (with a retry) rather than silently giving up.
-		self:FinishSync(nil, nil, self.syncSource)
+		self:FinishSync(nil, nil, self.syncTried and self.syncSource or nil)
 		return
 	end
 	best.tried = true
+	self.syncTried = true
+	self.syncOffer = best
 	self.syncSource = best.sender
 	self.syncPhase = "downloading"
 	self.syncProgress = 0
@@ -847,51 +1020,98 @@ end
 function ArtPad:FetchNewerCopy()
 	if self.newerCopyPending then return end
 	self.newerCopyPending = true
+	local scope = self.scope
 	C_Timer.After(SYNC_COLLECT + 4, function()
+		if scope ~= self.scope then return end -- that was another audience
 		self.newerCopyPending = nil
-		if not self.syncing then self:StartSync("someone has a newer copy") end
+		if self.syncing then
+			self.resyncWanted = true -- busy with a sync that started before they asked: go again after it
+		else
+			self:StartSync("someone has a newer copy")
+		end
 	end)
+end
+
+-- "Reload the canvas from others": take the newest copy anyone has, whatever its age. If
+-- nobody has one (you're alone), your own comes back rather than being lost.
+function ArtPad:Resync()
+	self:SwitchScope() -- ends a drag, drops unsent work, aborts a running sync
+	if self.node then self:SavePlaceCanvas() end
+	local keep = (#self.items > 0 or self.canvasModified > 0) and self:SerializeCanvas() or nil
+	self:ResetCanvas()
+	self.resyncKeep = keep
+	self:StartSync("manual")
+end
+
+function ArtPad:RestoreKept()
+	local keep = self.resyncKeep
+	self.resyncKeep = nil
+	if not keep then return end
+	local ok, err = pcall(self.LoadCanvas, self, keep)
+	if ok then
+		self.copyComplete = true
+	else
+		self:Debug("resync: couldn't restore our copy: " .. tostring(err))
+		self:ResetCanvas()
+	end
 end
 
 function ArtPad:FinishSync(snapshot, from, failedFrom, keptOurs)
 	local buffer = self.syncBuffer
+	local again = self.resyncWanted
 	self.syncing = false
 	self.syncToken = nil
-	self.syncSource = nil
+	self.syncSource, self.syncOffer = nil, nil
 	self.syncBuffer = {}
 	self.syncPhase = nil
 	self.syncProgress = nil
+	self.resyncWanted = nil
 	self:RequestRefresh()
-	if failedFrom then
-		self:Notify(("Couldn't load the canvas from %s."):format(ShortName(failedFrom)), "error", {
-			action = { "Retry", function() self:StartSync("retry") end },
-		})
-	elseif not snapshot and not keptOurs and #self.items == 0 then
-		self:Notify("Nobody else has a drawing up yet. You're starting fresh!", "info", { quiet = true })
-	end
+	local loaded = false
 	if snapshot then
 		local undo = self.undoStack
 		self.undoStack = {}
 		local ok, err = pcall(self.LoadCanvas, self, snapshot)
-		if not ok then
+		if ok then
+			loaded = true
+			self.resyncKeep = nil
+			self.copyComplete = true
+			for _, entry in ipairs(buffer) do
+				self:ApplyLivePacket(entry[1], entry[2], true)
+			end
+			-- Our own work that hasn't gone out yet (finished or still being drawn) is still
+			-- going out: put it back on top of the copy we just loaded.
+			self:ReapplyQueue()
+			for _, id in ipairs(undo) do
+				if self.itemsById[id] then tinsert(self.undoStack, id) end
+			end
+			if #self.items > 0 then
+				self:Notify(("Loaded the canvas from %s."):format(ShortName(from)), "success", { quiet = true })
+				self:NotifyActivity()
+			end
+		else
+			-- Half a canvas is worse than none: drop it and say the load failed.
 			self:Debug("sync: bad snapshot: " .. tostring(err))
-		end
-		for _, entry in ipairs(buffer) do
-			self:ApplyLivePacket(entry[1], entry[2], true)
-		end
-		-- Re-add any of our in-progress stroke that hasn't been sent yet.
-		local s = self.currentStroke
-		if s and not self.loopback then
-			for i = 1, s.n do self:MirrorStrokePoint(i) end
-		end
-		for _, id in ipairs(undo) do
-			if self.itemsById[id] then tinsert(self.undoStack, id) end
-		end
-		if #self.items > 0 then
-			self:Notify(("Loaded the canvas from %s."):format(ShortName(from)), "success", { quiet = true })
-			self:NotifyActivity()
+			self.undoStack = {}
+			self:ResetCanvas()
+			failedFrom = failedFrom or from
 		end
 	end
+	if not loaded then
+		if self.resyncKeep then self:RestoreKept() end -- a manual reload found nothing better
+		if failedFrom then
+			self:Notify(("Couldn't load the canvas from %s."):format(ShortName(failedFrom)), "error", {
+				action = { "Retry", function() self:StartSync("retry") end },
+			})
+		else
+			-- we kept ours, or nobody else has one: either way this copy is the canvas
+			self:MarkCopyComplete()
+			if not keptOurs and #self.items == 0 then
+				self:Notify("Nobody else has a drawing up yet. You're starting fresh!", "info", { quiet = true })
+			end
+		end
+	end
+	if again then self:StartSync("someone has a newer copy") end
 end
 
 function ArtPad:OnSyncMessage(prefix, msg, disType, sender)
@@ -913,11 +1133,16 @@ function ArtPad:OnSyncMessage(prefix, msg, disType, sender)
 		if disType == "WHISPER" or not self:AcceptsDistribution(disType) then return end
 		-- Answer even while syncing ourselves (if we have something): otherwise two people
 		-- joining at once would each wait on the other. The joiner picks the fullest canvas.
-		if not queryNonce then return end
+		if not queryNonce or self.loopback then return end
 		if queryModified > self.canvasModified then self:FetchNewerCopy() end
+		-- Only a complete copy is offered: a fragment (not synced yet) would pass for the canvas.
+		if not self.copyComplete then return end
 		-- An empty canvas still counts if it's a real change (a clear): it must beat old copies.
 		if #self.items == 0 and self.canvasModified == 0 then return end
 		local data = self:GetSnapshotData()
+		-- remember which audience this offer was made for (see G below)
+		self.offered = self.offered or {}
+		self.offered[queryNonce] = self.scope or 0
 		self:SendCommMessage(prefix, ("H(%s,%d,%d,%d)"):format(queryNonce, #self.items, #data, self.canvasModified),
 			"WHISPER", sender, "ALERT")
 	elseif disType ~= "WHISPER" then
@@ -929,7 +1154,21 @@ function ArtPad:OnSyncMessage(prefix, msg, disType, sender)
 				modified = tonumber(modified) or 0 })
 		end
 	elseif kind == "G" then
-		self:SendSnapshot(arg, sender)
+		-- Serve the canvas only if it is still the one we offered for this request: after a
+		-- change of audience the current canvas is somebody else's. Decline otherwise, so the
+		-- asker moves on to their next offer at once.
+		if self.offered and self.offered[arg] == (self.scope or 0) and self.copyComplete then
+			self:SendSnapshot(arg, sender)
+		else
+			self:SendCommMessage(prefix, "N(" .. arg .. ")", "WHISPER", sender, "ALERT")
+		end
+	elseif kind == "N" then
+		if self.syncing and arg == self.syncNonce and self.syncSource
+				and ShortName(sender) == ShortName(self.syncSource) then
+			self:Debug("sync: " .. ShortName(sender) .. " no longer has that canvas")
+			self.syncSource = nil -- declined, not failed
+			self:RequestSnapshot(arg)
+		end
 	end
 end
 
@@ -977,7 +1216,11 @@ function ArtPad:OnDataMessage(prefix, msg, disType, sender)
 	end
 	self.syncChunks = nil
 	local snapshot = self:DecodeData(table.concat(parts, "", 1, n))
-	if type(snapshot) == "table" and type(snapshot.items) == "table" then
+	local offer = self.syncOffer
+	-- What arrives must be at least as new as what was offered: an older (or emptied) canvas
+	-- means the sender's canvas changed hands in between.
+	if type(snapshot) == "table" and type(snapshot.items) == "table"
+			and (not offer or (tonumber(snapshot.modified) or 0) >= offer.modified) then
 		self:FinishSync(snapshot, sender)
 	else
 		self:RequestSnapshot(nonce)
@@ -986,10 +1229,109 @@ end
 
 --[[ Version check ]]
 
+-- The version prefix never changes, so every ArtPad version can hear it. A plain version
+-- string is an announcement (sent at login, and as the answer to a query); "?" asks everyone
+-- to answer by whisper (10.1 and older ignore it, but announce themselves at login).
+-- Versions are "major.minor[.patch]" and compare part by part as whole numbers (10.10 is
+-- newer than 10.9). Returns -1, 0, 1, or nil if either can't be read.
+function ArtPad.CompareVersions(a, b)
+	local function Parts(v)
+		local parts = {}
+		for n in tostring(v or ""):gmatch("[^%.]+") do
+			if not n:match("^%d+$") then return nil end
+			parts[#parts + 1] = tonumber(n)
+		end
+		return #parts > 0 and parts or nil
+	end
+	local pa, pb = Parts(a), Parts(b)
+	if not pa or not pb then return nil end
+	for i = 1, math.max(#pa, #pb) do
+		local x, y = pa[i] or 0, pb[i] or 0
+		if x ~= y then return x < y and -1 or 1 end
+	end
+	return 0
+end
+
+local function PeerIsOld(self, peer)
+	return (peer.protocol and peer.protocol < tonumber(self.protocolVersion))
+		or (peer.version and ArtPad.CompareVersions(peer.version, self.version) == -1) or false
+end
+
+function ArtPad:RecordPeer(sender, version, protocol)
+	if self:IsSelf(sender) then return end
+	local name = ShortName(sender)
+	local peer = self.peerVersions[name] or {}
+	self.peerVersions[name] = peer
+	peer.version = version or peer.version
+	peer.protocol = protocol or peer.protocol
+	-- announcing a version as new as ours means they have updated since we heard the old one
+	if version and (ArtPad.CompareVersions(version, self.version) or -1) >= 0 then peer.protocol = nil end
+	peer.seen = GetTime()
+	local old = PeerIsOld(self, peer)
+	if old and not peer.warned then
+		peer.warned = true
+		-- Every ArtPad version shows "update available" when it hears a newer one: tell them.
+		self:SendCommMessage(self.versionPrefix, tostring(self.version), "WHISPER", sender, "BULK")
+		self:Notify(("%s has an out of date version of ArtPad%s and cannot see your drawings.")
+			:format(name, peer.version and (" (" .. peer.version .. ")") or ""), "warn")
+	end
+end
+
 function ArtPad:OnVersionMessage(prefix, message, disType, sender)
-	local theirs, ours = tonumber(message), tonumber(self.version)
-	if theirs and ours and theirs > ours and not self.newerVersion then
+	if message == "?" then
+		if not self:IsSelf(sender) then
+			self:SendCommMessage(self.versionPrefix, tostring(self.version), "WHISPER", sender, "BULK")
+		end
+		return
+	end
+	if not message:match("^%d+[%d%.]*$") then return end
+	self:RecordPeer(sender, message)
+	if ArtPad.CompareVersions(message, self.version) == 1 and not self.newerVersion then
 		self.newerVersion = message
 		self:UpdateTitle()
+		self:Message(("A new version of ArtPad is available (%s)."):format(message))
+		self:Notify("Your version of ArtPad is out of date.", "warn")
+	end
+end
+
+-- Traffic on an older protocol's channel: that sender can't see our drawings (or we theirs).
+function ArtPad:OnOldProtocol(prefix, message, disType, sender)
+	self:RecordPeer(sender, nil, tonumber(prefix:match("(%d+)$")))
+end
+
+-- /ap versions: ask your guild and group, then list everyone heard from.
+function ArtPad:QueryVersions()
+	local asked = false
+	if IsInGuild() then
+		self:SendCommMessage(self.versionPrefix, "?", "GUILD", nil, "BULK")
+		asked = true
+	end
+	local group = (LE_PARTY_CATEGORY_INSTANCE and IsInGroup(LE_PARTY_CATEGORY_INSTANCE) and "INSTANCE_CHAT")
+		or (IsInRaid() and "RAID") or (IsInGroup() and "PARTY") or nil
+	if group then
+		self:SendCommMessage(self.versionPrefix, "?", group, nil, "BULK")
+		asked = true
+	end
+	if not asked then
+		self:Message("You are not in a guild or group.")
+		return
+	end
+	self:Message("Checking ArtPad versions...")
+	C_Timer.After(4, function() self:PrintVersions() end)
+end
+
+function ArtPad:PrintVersions()
+	local names = {}
+	for name in pairs(self.peerVersions) do table.insert(names, name) end
+	table.sort(names)
+	self:Message(("You: %s"):format(tostring(self.version)))
+	if #names == 0 then
+		self:Message("No other players responded.")
+	end
+	for _, name in ipairs(names) do
+		local p = self.peerVersions[name]
+		local old = PeerIsOld(self, p)
+		self:Message(("%s: %s%s"):format(name, p.version or "Unknown",
+			old and " |cffff8f84(Out of date)|r" or ""))
 	end
 end

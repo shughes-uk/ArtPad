@@ -78,7 +78,7 @@ function ArtPad:SetupOptions()
 	Place(CreateCheck(panel, "Only show drawings from leaders and officers",
 		"Party: the leader. Raid: leader and assistants. Guild: ranks up to the officer rank below.",
 		function() return ArtPad_Settings.AdminOnly end,
-		function(v) ArtPad_Settings.AdminOnly = v end))
+		function(v) self:SetAdminOnly(v) end))
 
 	-- Guild officer rank: -/+ stepper
 	local rankLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
@@ -131,10 +131,7 @@ function ArtPad:SetupOptions()
 		function(v) self:SetLoopback(v) end))
 
 	y = y - 10
-	local resync = CreateButton(panel, "Reload canvas from others", 200, function()
-		self:ResetCanvas()
-		self:StartSync("manual")
-	end)
+	local resync = CreateButton(panel, "Reload canvas from others", 200, function() self:Resync() end)
 	resync:SetPoint("TOPLEFT", 16, y)
 	local recenter = CreateButton(panel, "Fit canvas to screen", 180, function()
 		self:ResetPosition()
@@ -161,6 +158,7 @@ function ArtPad:RefreshOptions()
 		widget.Refresh()
 	end
 	for _, s in ipairs(self.shareSwitches or {}) do s:Refresh() end
+	if self.sharingPopover and self.sharingPopover:IsShown() then self:RefreshSharingPopover() end
 end
 
 function ArtPad:OpenOptions()

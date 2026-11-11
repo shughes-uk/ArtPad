@@ -87,14 +87,14 @@ function ArtPad:BenchScribble(points)
 	bench.strokes = bench.strokes or {}
 	table.insert(bench.strokes, s)
 	local x, y, angle = self.canvasSize.X / 2, self.canvasSize.Y / 2, 0
-	self.quiet = (self.quiet or 0) + 1 -- not a change to the shared canvas
+	self:Quietly(function() -- not a change to the shared canvas
 	for i = 1, points do
 		angle = angle + (math.random() - 0.5) * 2.4
 		x = math.max(20, math.min(self.canvasSize.X - 20, x + 14 * math.cos(angle)))
 		y = math.max(20, math.min(self.canvasSize.Y - 20, y + 14 * math.sin(angle)))
 		self:SetStrokePoint(s, i, math.floor(x), math.floor(y))
 	end
-	self.quiet = self.quiet - 1
+	end)
 	self:Message(("bench: scribble of %d points; canvas lines in use %d (budget %s, cap %s)%s")
 		:format(points, self.linesInUse, tostring(self.lineBudget), tostring(self.lineCap),
 			self.coarse and ", simplified" or ""))
@@ -106,6 +106,7 @@ function ArtPad:BenchClear(quiet)
 	for _, s in ipairs(bench.strokes or {}) do self.ReleaseItem(s) end
 	bench.strokes = {}
 	bench.count = 0
+	self:AfterRemoval() -- the real canvas goes back to its normal detail
 	if not quiet then self:Message("bench: cleared (/reload for a clean slate)") end
 end
 
@@ -127,15 +128,124 @@ function ArtPad:BenchCommand(arg)
 	elseif cmd == "nolimit" then
 		if self.lineCap == math.huge then
 			self.lineBudget, self.lineCap = self.LINE_BUDGET, self.LINE_CAP
+			self:CheckLineBudget()
 			self:Message("bench: line budget and cap back on")
 		else
 			self.lineBudget, self.lineCap = math.huge, math.huge
+			self:AfterRemoval() -- with no budget, curves are drawn in full again
 			self:Message("bench: line budget and cap OFF (drawings can vanish again)")
 		end
+	elseif cmd == "mapshot" then
+		self:BenchMapShot(a)
 	elseif cmd == "clear" then
 		self:BenchClear()
 	else
 		self:BenchReport()
-		self:Message("bench lines|tex <n> [per frame], more <n>, scribble <points>, nolimit, clear")
+		self:Message("bench lines|tex <n> [per frame], more <n>, scribble <points>, nolimit, clear, mapshot [area]")
 	end
+end
+
+--[[
+	/ap bench mapshot [area]: the map around the first place (the Lion's Pride Inn), drawn
+	full screen at exactly SHOT_SCALE screen pixels per map pixel with no filtering, on a
+	magenta background, for a lossless screenshot of the original art (to upscale offline).
+	area: how much more than the place's own view to include (default 3). Run it again to
+	close it.
+]]
+local SHOT_SCALE = 4
+
+function ArtPad:BenchMapShot(area)
+	if self.mapShot and self.mapShot:IsShown() then
+		self.mapShot:Hide()
+		self:Message("mapshot: closed")
+		return
+	end
+	area = area or 3
+	local place = self.PLACES[1]
+	local mapID, layer, textures
+	for _, id in ipairs(place.mapIDs) do
+		layer, textures = self:GetMapTiles(id)
+		if layer then mapID = id break end
+	end
+	if not mapID then
+		self:Message("mapshot: no map art for " .. place.name .. " on this client")
+		return
+	end
+	local view = self:PlaceView(place, mapID)
+	local tw, th, lw, lh = layer.tileWidth, layer.tileHeight, layer.layerWidth, layer.layerHeight
+	-- Source window in whole map pixels, `area` times the place's view
+	local cx, cy = (view[1] + view[3]) / 2 * lw, (view[2] + view[4]) / 2 * lh
+	local hw, hh = (view[3] - view[1]) / 2 * lw * area, (view[4] - view[2]) / 2 * lh * area
+	local vx0, vy0 = math.max(0, math.floor(cx - hw)), math.max(0, math.floor(cy - hh))
+	local vx1, vy1 = math.min(lw, math.ceil(cx + hw)), math.min(lh, math.ceil(cy + hh))
+
+	local f = self.mapShot
+	if not f then
+		f = CreateFrame("Frame", "ArtPad_MapShot", UIParent)
+		f:SetFrameStrata("FULLSCREEN_DIALOG")
+		f:SetIgnoreParentScale(true)
+		f.bg = f:CreateTexture(nil, "BACKGROUND")
+		f.bg:SetAllPoints()
+		f.bg:SetColorTexture(1, 0, 1, 1)
+		f.textures = {}
+		self.mapShot = f
+	end
+	-- One unit = one physical screen pixel
+	local pw, ph = GetPhysicalScreenSize()
+	f:SetScale(768 / ph)
+	f:ClearAllPoints()
+	f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+	f:SetSize(pw, ph)
+	for _, tex in ipairs(f.textures) do tex:Hide() end
+	local used = 0
+	local imgW, imgH = (vx1 - vx0) * SHOT_SCALE, (vy1 - vy0) * SHOT_SCALE
+	local left, top = math.floor((pw - imgW) / 2), math.floor((ph - imgH) / 2)
+	local function Draw(fileID, sublevel, x, y, w, h, fw, fh)
+		local ix0, iy0 = math.max(x, vx0), math.max(y, vy0)
+		local ix1, iy1 = math.min(x + w, vx1), math.min(y + h, vy1)
+		if ix1 <= ix0 or iy1 <= iy0 then return end
+		used = used + 1
+		local tex = f.textures[used]
+		if not tex then
+			tex = f:CreateTexture(nil, "ARTWORK")
+			f.textures[used] = tex
+		end
+		tex:SetDrawLayer("ARTWORK", sublevel)
+		tex:SetTexture(fileID, nil, nil, "NEAREST")
+		tex:SetTexCoord((ix0 - x) / fw, (ix1 - x) / fw, (iy0 - y) / fh, (iy1 - y) / fh)
+		tex:ClearAllPoints()
+		tex:SetSize((ix1 - ix0) * SHOT_SCALE, (iy1 - iy0) * SHOT_SCALE)
+		tex:SetPoint("TOPLEFT", f, "TOPLEFT", left + (ix0 - vx0) * SHOT_SCALE, -(top + (iy0 - vy0) * SHOT_SCALE))
+		tex:Show()
+	end
+	local cols = math.ceil(lw / tw)
+	for i, fileID in ipairs(textures) do
+		local col, row = (i - 1) % cols, math.floor((i - 1) / cols)
+		local cw, ch = math.min(tw, lw - col * tw), math.min(th, lh - row * th)
+		if cw > 0 and ch > 0 then Draw(fileID, 1, col * tw, row * th, cw, ch, tw, th) end
+	end
+	local TILE = 256
+	for overlay in self:GetExploredOverlays(mapID):gmatch("[^;]+") do
+		local w, h, x, y, ids = overlay:match("^(%d+),(%d+),(%-?%d+),(%-?%d+),([%d%.]+)$")
+		if w then
+			w, h, x, y = tonumber(w), tonumber(h), tonumber(x), tonumber(y)
+			local fileIDs = {}
+			for id in ids:gmatch("%d+") do table.insert(fileIDs, tonumber(id)) end
+			local wide, tall = math.ceil(w / TILE), math.ceil(h / TILE)
+			for j = 1, tall do
+				local tph, fh = self.MapTileSpan(h, j, tall)
+				for k = 1, wide do
+					local fileID = fileIDs[(j - 1) * wide + k]
+					if fileID then
+						local tpw, fw = self.MapTileSpan(w, k, wide)
+						Draw(fileID, 2, x + TILE * (k - 1), y + TILE * (j - 1), tpw, tph, fw, fh)
+					end
+				end
+			end
+		end
+	end
+	f:Show()
+	self:Message(("mapshot: map %d, pixels %d,%d to %d,%d (%dx%d) at %dx on a %dx%d screen. "
+		.. "For a lossless shot: /console screenshotFormat tga, then Print Screen. /ap bench mapshot again to close.")
+		:format(mapID, vx0, vy0, vx1, vy1, vx1 - vx0, vy1 - vy0, SHOT_SCALE, pw, ph))
 end

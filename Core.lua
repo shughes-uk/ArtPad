@@ -43,6 +43,7 @@ local defaults = {
 	View = false, -- { scale, x, y } of the canvas in the window; false = fit
 	WindowSize = false, -- { w, h }; false = default
 	MapDim = 0.4, -- darken the map backdrop so drawings stand out
+	MapDrawings = {}, -- prototype: world map drawings, mapID -> strokes (WorldMapDraw.lua)
 	BrushSize = 3,
 	Color = { r = 1, g = 1, b = 1, a = 1 },
 	RecentColors = {},
@@ -53,11 +54,48 @@ local defaults = {
 
 --[[ Helpers ]]
 
--- Character name without realm. Character names can't contain "-", so strip from the first
--- one too, in case a client formats senders differently from what Ambiguate expects.
+-- The name a player is known by here: the bare character name for someone on our own realm
+-- (however the client formats it), "Name-Realm" for someone on another. Two characters with
+-- the same name on different realms can share a cross-realm group, and must not be taken
+-- for each other - or for us.
+local function OwnRealm()
+	local realm = (GetNormalizedRealmName and GetNormalizedRealmName()) or (GetRealmName and GetRealmName())
+	return realm and (realm:gsub("[%s%-]", "")) or nil
+end
+
 function ArtPad.ShortName(name)
 	if not name then return nil end
-	return (Ambiguate(name, "none"):gsub("%-.*$", ""))
+	local short = Ambiguate(name, "none")
+	local base, realm = short:match("^([^%-]+)%-(.+)$")
+	if not base then return short end
+	local own = OwnRealm()
+	-- our realm, or ours isn't known yet (addons still loading): the bare name
+	if not own or realm:gsub("[%s%-]", "") == own then return base end
+	return short
+end
+
+-- Our character's own name from the client, or nil while it is still a placeholder.
+local function UnitNameNow()
+	local name = ArtPad.ShortName(UnitName("player"))
+	if name and name ~= "" and name ~= UNKNOWNOBJECT and name ~= "Unknown" then return name end
+end
+
+-- Could `full` be us as others see us? Our UnitName, possibly followed by a surname.
+function ArtPad:LooksLikeMe(sender)
+	local full = ArtPad.ShortName(sender)
+	local unit = UnitNameNow()
+	if not full or full == "" then return false end
+	if not unit then return true end -- can't tell yet
+	return full == unit or full:sub(1, #unit + 1) == unit .. " "
+end
+
+-- The one place the name changes: everything drawn under the old name is re-keyed first, so
+-- item ids here keep matching the ids everyone else derives from our sender name.
+function ArtPad:SetPlayerName(name)
+	local old = self.playerName
+	if not name or name == old then return end
+	if old and self.RenameAuthor and self.items then self:Quietly(self.RenameAuthor, old, name) end
+	self.playerName = name
 end
 
 -- Your name as other players see it: the sender name on your messages, and the author part
@@ -71,13 +109,15 @@ function ArtPad:RefreshPlayerName()
 	local guid = UnitGUID and UnitGUID("player")
 	local saved = guid and type(ArtPad_Settings.FullNames) == "table" and ArtPad_Settings.FullNames[guid]
 	if type(saved) == "string" and saved ~= "" then
-		self.playerName = saved
-		return saved
+		-- trusted only while it still fits the character (it may have been renamed since)
+		if self:LooksLikeMe(saved) then
+			self:SetPlayerName(saved)
+			return saved
+		end
+		ArtPad_Settings.FullNames[guid] = nil
 	end
-	local name = ArtPad.ShortName(UnitName("player"))
-	if name and name ~= "" and name ~= UNKNOWNOBJECT and name ~= "Unknown" then
-		self.playerName = name
-	end
+	local name = UnitNameNow()
+	if name then self:SetPlayerName(name) end
 	return self.playerName
 end
 
@@ -85,21 +125,17 @@ function ArtPad:LearnOwnName(sender)
 	local full = ArtPad.ShortName(sender)
 	if not full or full == "" then return end
 	-- Sanity check: it has to be our UnitName, possibly followed by a surname.
-	local unit = ArtPad.ShortName(UnitName("player"))
-	if unit and unit ~= "" and unit ~= "Unknown" and unit ~= UNKNOWNOBJECT
-			and full ~= unit and full:sub(1, #unit + 1) ~= unit .. " " then
-		return
+	if not self:LooksLikeMe(sender) then return end
+	if full ~= self.playerName then
+		self:Debug(("own name is %s (was %s)"):format(full, tostring(self.playerName)))
+		self:SetPlayerName(full)
 	end
 	self.learnedName = true
+	self.sentRecently = nil
 	local guid = UnitGUID and UnitGUID("player")
 	if guid then
 		if type(ArtPad_Settings.FullNames) ~= "table" then ArtPad_Settings.FullNames = {} end
 		ArtPad_Settings.FullNames[guid] = full
-	end
-	if full ~= self.playerName then
-		self:Debug(("own name is %s (was %s)"):format(full, tostring(self.playerName)))
-		if self.RenameAuthor then self:Quietly(self.RenameAuthor, self.playerName, full) end
-		self.playerName = full
 	end
 end
 
@@ -126,8 +162,16 @@ end
 --[[ Lifecycle ]]
 
 function ArtPad:OnInitialize()
-	if type(ArtPad_Settings) ~= "table" or (tonumber(ArtPad_Settings.SaveVersion) or 0) < self.saveVersion then
+	if type(ArtPad_Settings) ~= "table" then
 		ArtPad_Settings = {}
+	elseif (tonumber(ArtPad_Settings.SaveVersion) or 0) < self.saveVersion then
+		-- Older settings start over, but kept drawings and learned names carry across: each
+		-- is checked for shape where it is read.
+		local old = ArtPad_Settings
+		ArtPad_Settings = {}
+		for _, key in ipairs({ "PlaceCanvases", "MapDrawings", "FullNames", "MapHintSeen" }) do
+			ArtPad_Settings[key] = old[key]
+		end
 	end
 	for k, v in pairs(defaults) do
 		if ArtPad_Settings[k] == nil then
@@ -150,7 +194,7 @@ function ArtPad:OnEnable()
 	-- Messaging first: it doesn't depend on the UI, so drawing and syncing keep working even
 	-- if a piece of the UI fails to build. Each step reports its own error to chat.
 	self:SetupComm()
-	for _, step in ipairs({ "SetupUI", "SetupTools", "SetupFeedback", "SetupOptions", "SetupLauncher", "SetupPlaces" }) do
+	for _, step in ipairs({ "SetupUI", "SetupTools", "SetupFeedback", "SetupOptions", "SetupLauncher", "SetupPlaces", "SetupWorldMapDraw" }) do
 		local ok, err = pcall(self[step], self)
 		if not ok then
 			self:Message("|cffff6060setup failed (" .. step .. "):|r " .. tostring(err))
@@ -165,7 +209,7 @@ function ArtPad:OnEnable()
 
 	self.eventFrame = CreateFrame("Frame")
 	for event in pairs(events) do
-		self.eventFrame:RegisterEvent(event)
+		pcall(self.eventFrame.RegisterEvent, self.eventFrame, event) -- not every client has every event
 	end
 	self.eventFrame:SetScript("OnEvent", function(_, event, ...)
 		events[event](self, ...)
@@ -175,8 +219,10 @@ end
 function events:PLAYER_ENTERING_WORLD()
 	if not self.enteredWorld then
 		self.enteredWorld = true
+		self.wasInGuild = IsInGuild() and true or false
 		-- Give the guild/group roster a moment to arrive before asking for the canvas.
 		C_Timer.After(3, function() self:StartSync("login") end)
+		C_Timer.After(6, function() self:AnnounceVersion() end)
 	end
 end
 
@@ -184,26 +230,67 @@ function events:PLAYER_LOGOUT()
 	self:SavePlaceCanvas()
 end
 
+-- Fires just before combat locks key bindings: let go of ours now, so none can be left on a
+-- window that gets closed during the fight. They come back when combat ends.
 function events:PLAYER_REGEN_DISABLED()
+	self:ReleaseBindings()
 	if ArtPad_Settings.HideInCombat and self.window:IsShown() then
 		self.window:Hide()
 	end
 end
 
+function events:PLAYER_REGEN_ENABLED()
+	self:SyncBindings()
+end
+
 function events:GROUP_JOINED()
-	if ArtPad_Settings.Mode == "RAID" then
-		C_Timer.After(2, function() self:StartSync("group joined") end)
+	C_Timer.After(3, function() self:AnnounceVersion() end)
+	if ArtPad_Settings.Mode == "RAID" and not self.loopback then
+		local scope = self.scope
+		C_Timer.After(2, function()
+			if scope == self.scope then self:StartSync("group joined") end
+		end)
+	end
+end
+
+-- A sync that found nobody to ask (no guild or group known yet) goes ahead once there is one.
+function ArtPad:RetryWantedSync()
+	if self.wantSync and not self.syncing and self:GetChannel() then
+		self:StartSync("someone to sync with now")
 	end
 end
 
 function events:GUILD_ROSTER_UPDATE()
 	self.guildRanks = nil -- rebuilt lazily by GetGuildRank
+	self:RetryWantedSync()
 end
 
 -- Keep the "sharing with" indicator honest as groups and guilds change.
-function events:GROUP_ROSTER_UPDATE() self:RequestRefresh() end
-function events:GROUP_LEFT() self:RequestRefresh() end
-function events:PLAYER_GUILD_UPDATE() self:RequestRefresh() end
+function events:GROUP_ROSTER_UPDATE()
+	self:RequestRefresh()
+	self:RetryWantedSync()
+end
+
+-- The group's canvas belonged to the group: leaving it is a change of audience.
+function events:GROUP_LEFT()
+	if ArtPad_Settings.Mode == "RAID" and not self.loopback then
+		self:SwitchScope()
+		self:ResetCanvas()
+	end
+	self:RequestRefresh()
+end
+
+-- So is leaving (or changing) guild. Gaining one is when the guild's canvas can be fetched.
+function events:PLAYER_GUILD_UPDATE()
+	local inGuild = IsInGuild() and true or false
+	if ArtPad_Settings.Mode == "GUILD" and not self.loopback and self.wasInGuild and not inGuild then
+		self:SwitchScope()
+		self:ResetCanvas()
+	end
+	self.wasInGuild = inGuild
+	self:RequestRefresh()
+	self:RetryWantedSync()
+end
 
 --[[ Modes ]]
 
@@ -216,6 +303,8 @@ local MODE_MESSAGES = {
 function ArtPad:SetMode(mode)
 	if ArtPad_Settings.Mode == mode or not MODE_MESSAGES[mode] then return end
 	if self.node then self:LeavePlace(true) end -- keeps the place's drawing
+	-- A different audience: end a drag, drop unsent work, abort a sync that is still running.
+	self:SwitchScope()
 	ArtPad_Settings.Mode = mode
 	self:Notify(MODE_MESSAGES[mode], "success")
 	self:RequestRefresh()
@@ -227,6 +316,18 @@ function ArtPad:SetMode(mode)
 		self:StartSync("mode change")
 	end
 	self:RefreshOptions()
+end
+
+-- "Leaders only" changes whose drawings count, so the canvas is fetched again to match:
+-- otherwise you keep a picture nobody else has until you reload it by hand.
+function ArtPad:SetAdminOnly(on)
+	on = on and true or false
+	if on == (ArtPad_Settings.AdminOnly and true or false) then return end
+	ArtPad_Settings.AdminOnly = on
+	self.guildRanks = nil
+	if not self.node and not self.loopback then self:Resync() end
+	self:RefreshOptions()
+	self:RequestRefresh()
 end
 
 local NEXT_MODE = { GUILD = "RAID", RAID = "LOCAL", LOCAL = "GUILD" }
@@ -312,10 +413,7 @@ ArtPad.slashCommands = {
 	guild = function(self) self:SetMode("GUILD") end,
 	raid = function(self) self:SetMode("RAID") end,
 	["local"] = function(self) self:SetMode("LOCAL") end,
-	resync = function(self)
-		self:ResetCanvas()
-		self:StartSync("manual")
-	end,
+	resync = function(self) self:Resync() end,
 	map = function(self) self:ToggleMap() end,
 	resetui = function(self)
 		self:ResetAllFramePositions()
@@ -323,6 +421,7 @@ ArtPad.slashCommands = {
 	end,
 	fit = function(self) self:ResetPosition() end,
 	stats = function(self) self:PrintStats() end,
+	versions = function(self) self:QueryVersions() end,
 	node = function(self) self:PrintPlaces() end, -- hidden: distances to places
 	bench = function(self, arg) self:BenchCommand(arg) end, -- hidden: Debug.lua
 	size = function(self, arg)
@@ -331,9 +430,8 @@ ArtPad.slashCommands = {
 		self:Message("brush size " .. ArtPad_Settings.BrushSize)
 	end,
 	adminonly = function(self, arg)
-		ArtPad_Settings.AdminOnly = OnOff(arg, ArtPad_Settings.AdminOnly)
+		self:SetAdminOnly(OnOff(arg, ArtPad_Settings.AdminOnly))
 		self:Message("only leaders/officers: " .. (ArtPad_Settings.AdminOnly and "on" or "off"))
-		self:RefreshOptions()
 	end,
 	adminrank = function(self, arg)
 		local n = tonumber(arg)
@@ -387,6 +485,7 @@ function ArtPad.OnSlashCommand(msg)
 		self:Message("/ap guild | raid | local  - who shares your canvas (local: places like inns)")
 		self:Message("/ap undo  (or Ctrl-Z)   /ap size <n>  - brush size")
 		self:Message("/ap resync  - re-download the canvas   /ap clear  - clear locally")
+		self:Message("/ap versions  - list ArtPad versions in your guild and group")
 		self:Message("/ap map  - show/hide the map of where you are   /ap fit  - fit canvas to screen")
 		self:Message("/ap resetui  - put the window back to its default size and spot")
 		self:Message("/ap adminonly [on|off]   /ap adminrank <n>")
