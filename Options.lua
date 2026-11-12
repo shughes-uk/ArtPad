@@ -116,6 +116,10 @@ function ArtPad:SetupOptions()
 	Place(CreateCheck(panel, "Show my name to others when I draw", nil,
 		function() return ArtPad_Settings.ShowMyName end,
 		function(v) ArtPad_Settings.ShowMyName = v end))
+	Place(CreateCheck(panel, "Share drawings on the world map",
+		"Shared with your guild or group. Turn this off to keep your map drawings to yourself.",
+		function() return ArtPad_Settings.MapShare ~= false end,
+		function(v) ArtPad:SetMapSharing(v) end))
 	Place(CreateCheck(panel, "Ask before clearing the canvas for everyone", nil,
 		function() return ArtPad_Settings.WarnClear end,
 		function(v) ArtPad_Settings.WarnClear = v end))

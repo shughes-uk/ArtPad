@@ -168,6 +168,11 @@ WorldFrame = CreateFrame("Frame", "WorldFrame")
 Minimap = CreateFrame("Frame", "Minimap")
 Minimap._w, Minimap._h = 140, 140
 GameTooltip = CreateFrame("GameTooltip", "GameTooltip")
+-- what the tooltip says, for tests
+function GameTooltip:SetOwner() self._lines = {} end
+function GameTooltip:SetText(text) self._lines = { text } end
+function GameTooltip:AddLine(text) self._lines = self._lines or {}; table.insert(self._lines, text) end
+function TOOLTIP_TEXT() return table.concat(GameTooltip._lines or {}, " / ") end
 ColorPickerFrame = CreateFrame("Frame", "ColorPickerFrame")
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) table.insert(CHAT, m) end }
 CHAT = {}

@@ -1910,10 +1910,10 @@ def test_world_map_drawing():
           "reopening the map starts with the tools away")
     check(a.ev('BINDINGS["ESCAPE"]') is None, "and the keys released")
 
-    # Local only
+    # The main canvas is a different thing: none of this lands on it
     w.pump(3)
-    check(len(w.log) == sent_before, "nothing is sent to anyone")
-    check(b.ev("next(ArtPad_Settings.MapDrawings)") is None and b.items() == 0, "Bob sees nothing")
+    check(len(w.log) > sent_before, "map drawings are sent (see test_world_map_drawings_are_shared)")
+    check(b.items() == 0 and a.items() == 0, "nothing lands on the shared canvas")
     check(a.items() == 0, "the ArtPad canvas is untouched")
 
 
@@ -2645,6 +2645,281 @@ def test_sync_ids_differ_between_players():
     a.ex("math.randomseed(1); N1 = ArtPad:NewSyncNonce()")
     b.ex("math.randomseed(1); N1 = ArtPad:NewSyncNonce()")
     check(a.ev("N1") != b.ev("N1") and len(a.ev("N1")) == 6, "same random state, different players: different ids")
+
+
+MAP_SIG = """
+function MAP_SIG(id)
+	local list = ArtPad_Settings.MapDrawings[id]
+	if not list then return "" end
+	local out = {}
+	for _, s in ipairs(list) do out[#out + 1] = s.id .. "/" .. (#s.p / 2) end
+	table.sort(out)
+	return table.concat(out, " ")
+end
+function MAP_N(id)
+	local list = ArtPad_Settings.MapDrawings[id]
+	return list and #list or 0
+end
+"""
+
+
+def map_open(c, tools=True):
+    c.ex(MAP_SIG)
+    c.ex("WorldMapFrame:Show(); MOUSE_OVER = true")
+    c.ex("ArtPad_MapDrawButton._over = false; ArtPad_MapBar._over = false; ArtPad_MapOptions._over = false")
+    if tools and not c.ev("ArtPad.worldMapDraw.on"):
+        c.ex("CLICK(ArtPad_MapDrawButton)")
+
+
+def map_drag(c, points):
+    def cursor(p):
+        c.ex("MAP_CURSOR = { %f, %f }; CURSOR_X, CURSOR_Y = %f, %f" % (p[0], p[1], p[0] * 1002, p[1] * 668))
+    cursor(points[0])
+    c.ex("ArtPad_MapInput._scripts.OnMouseDown(ArtPad_MapInput, 'LeftButton')")
+    for p in points[1:]:
+        cursor(p)
+        c.ex("ArtPad_MapInput._scripts.OnUpdate(ArtPad_MapInput, 0.016)")
+    c.ex("ArtPad_MapInput._scripts.OnMouseUp(ArtPad_MapInput, 'LeftButton')")
+
+
+def map_same(w, map_id, what, *names):
+    cs = [w.clients[n] for n in names] if names else list(w.clients.values())
+    for c in cs:
+        c.ex(MAP_SIG)
+    sigs = [c.ev(f"MAP_SIG({map_id})") for c in cs]
+    check(all(s == sigs[0] for s in sigs), f"{what}: everyone has the same drawing on map {map_id} ({[c.ev(f'MAP_N({map_id})') for c in cs]})")
+
+
+ZIG = [(0.2, 0.2), (0.3, 0.25), (0.4, 0.2), (0.5, 0.3)]
+
+
+def zig(dy):
+    return [(x, y + dy) for x, y in ZIG]
+
+
+def test_world_map_drawings_are_shared():
+    w = World()
+    a, b = w.add("Alice"), w.add("Bob")
+    settle(w)
+    for c in (a, b):
+        c.ex(MAP_SIG)
+    n = lambda c, m=37: c.ev(f"MAP_N({m})")
+
+    # A stroke reaches a guild mate who doesn't even have the map open
+    map_open(a)
+    w.pump(3)
+    a.ex("ArtPad:SetColor(1, 0.5, 0, 1)")
+    map_drag(a, ZIG)
+    check(n(b) == 0, "nothing is sent while the pen is down")
+    w.pump(3)
+    check(n(b) == 1, f"a finished stroke reaches a guild mate ({n(b)})")
+    map_same(w, 37, "first stroke")
+    check(abs(b.ev("ArtPad_Settings.MapDrawings[37][1].g") - 0.5) < 0.01 and b.ev("ArtPad_Settings.MapDrawings[37][1].p[1]") == 0.2,
+          "with its colour and place")
+    check(a.ev("ArtPad_Settings.MapDrawings[37][1].u") is None, "and is no longer waiting to be sent")
+    # ...and is drawn at once on a map that is open
+    map_open(b, tools=False)
+    w.pump(3)
+    check(b.ev("ArtPad.worldMapDraw.count") == 3, "Bob's open map shows it")
+    map_drag(a, zig(0.2))
+    w.pump(3)
+    check(n(b) == 2 and b.ev("ArtPad.worldMapDraw.count") == 6, "the next stroke appears on Bob's open map as it arrives")
+
+    # Both can draw; eraser, undo and clear reach everyone
+    map_open(b)
+    map_drag(b, zig(0.4))
+    w.pump(3)
+    check(n(a) == 3, "Bob's stroke reaches Alice")
+    map_same(w, 37, "both drawing")
+    a.ex("CLICK(ArtPad_MapTool_eraser)")
+    map_drag(a, [(0.3, 0.65), (0.31, 0.65), (0.32, 0.65)])  # across Bob's stroke
+    w.pump(3)
+    check(n(a) == 2 and n(b) == 2 and b.ev("ArtPad.worldMapDraw.count") == 6, "erasing someone's stroke removes it for both")
+    a.ex("ArtPad:WorldMapUndo()")
+    w.pump(3)
+    check(n(b) == 3, "undoing the erase puts it back for both")
+    map_same(w, 37, "undo erase")
+    a.ex("CLICK(ArtPad_MapClear)")
+    w.pump(3)
+    check(n(a) == 0 and n(b) == 0 and b.ev("ArtPad.worldMapDraw.count") == 0, "clear clears it for both")
+    a.ex("ArtPad:WorldMapUndo()")
+    w.pump(4)
+    check(n(b) == 3, "and undo brings it all back for both")
+    map_same(w, 37, "undo clear")
+    a.ex("CLICK(ArtPad_MapTool_pen)")
+    map_drag(b, zig(0.5))
+    w.pump(3)
+    b.ex("ArtPad:WorldMapUndo()")
+    w.pump(3)
+    check(n(a) == 3, "undoing your own stroke takes it off everyone's map")
+    map_same(w, 37, "undo stroke")
+    check(a.ev("ArtPad_Settings.MapDrawings[37].t") == b.ev("ArtPad_Settings.MapDrawings[37].t"), "and both agree on when the map last changed")
+
+    # Someone who logs in later gets it when they look at that map
+    c = w.add("Cat")
+    c.ex(MAP_SIG)
+    w.pump(5)
+    check(n(c) == 0, "nothing is fetched for a map nobody has looked at")
+    map_open(c, tools=False)
+    w.pump(6)
+    check(n(c) == 3 and c.ev("ArtPad.worldMapDraw.count") == 9, f"opening the map fetches its drawing ({n(c)} of 3)")
+    map_same(w, 37, "late joiner")
+    # A stroke heard for a map never looked at is kept, and the rest is fetched on looking
+    a.ex("WorldMapFrame:SetMapID(84)")
+    w.pump(3)
+    map_drag(a, ZIG)
+    w.pump(3)
+    d = w.add("Dana")
+    d.ex(MAP_SIG)
+    w.pump(4)
+    map_drag(a, zig(0.2))
+    w.pump(3)
+    check(n(d, 84) == 1, "a stroke heard live is kept even for a map never opened")
+    map_open(d, tools=False)
+    d.ex("WorldMapFrame:SetMapID(84)")
+    w.pump(6)
+    check(n(d, 84) == 2, f"and looking at that map fetches the rest ({n(d, 84)} of 2)")
+    map_same(w, 84, "fragment", "Alice", "Dana")
+    a.ex("WorldMapFrame:SetMapID(37)")
+    w.pump(3)
+
+    # Not on the shared canvas, and not to another audience
+    check(a.items() == 0 and b.items() == 0, "map drawings never land on the canvas")
+    p = w.add("Pug", guild=False)
+    p.ex(MAP_SIG)
+    w.pump(3)
+    check(n(p) == 0, "someone outside the guild gets nothing")
+
+
+def test_world_map_drawings_made_alone_go_public():
+    w = World()
+    old = [{"r": 1, "g": 0, "b": 0, "a": 1, "w": 0.003, "p": [0.1, 0.1, 0.2, 0.2, 0.3, 0.1]}]
+    a = w.add("Alice")
+    b = w.add("Bob", settings={"MapDrawings": {37: old}})  # drawn before map drawings were shared
+    settle(w)
+    for c in (a, b):
+        c.ex(MAP_SIG)
+    n = lambda c, m=37: c.ev(f"MAP_N({m})")
+    map_open(a)
+    w.pump(3)
+    map_drag(a, ZIG)
+    w.pump(3)
+    check(n(b) == 2, "Bob has his old drawing and Alice's new stroke")
+    check(n(a) == 1, "his old drawing hasn't gone anywhere yet: he hasn't looked at that map")
+    map_open(b, tools=False)
+    w.pump(6)
+    check(n(a) == 2, f"looking at the map publishes what he drew before ({n(a)} of 2)")
+    map_same(w, 37, "old drawings")
+    check(b.ev("ArtPad_Settings.MapDrawings[37][1].u") is None, "nothing left waiting")
+
+    # With sharing off (or nobody to share with) changes wait, then go out
+    b.ex("ArtPad:SetMapSharing(false)")
+    bob_before = len([m for m in w.log if m[0] == "Bob" and m[1].startswith("ArtPadMap")])
+    map_open(b)
+    map_drag(b, zig(0.3))                       # a stroke nobody hears about
+    b.ex("CLICK(ArtPad_MapTool_eraser)")
+    map_drag(b, [(0.3, 0.25), (0.31, 0.25), (0.32, 0.25)])  # erases Alice's stroke, here only
+    b.ex("CLICK(ArtPad_MapTool_pen)")
+    map_drag(a, zig(0.5))                       # which Bob doesn't hear either
+    w.pump(4)
+    bob_sent = len([m for m in w.log if m[0] == "Bob" and m[1].startswith("ArtPadMap")])
+    check(n(a) == 3 and n(b) == 2, f"with sharing off nothing goes either way (Alice {n(a)}, Bob {n(b)})")
+    check(bob_sent == bob_before, "and Bob sends nothing at all")
+    b.ex("ArtPad:SetMapSharing(true)")
+    w.pump(8)
+    check(len([m for m in w.log if m[0] == "Bob" and m[1].startswith("ArtPadMap")]) > bob_sent, "switching it back on speaks up")
+    map_same(w, 37, "after sharing again")
+    check(n(a) == 3, f"his stroke is added, his erasure applied, her stroke kept ({n(a)} strokes)")
+
+    # A stroke being drawn survives a copy arriving
+    c = w.add("Cat")
+    c.ex(MAP_SIG)
+    w.pump(4)
+    map_open(c)
+    c.ex("MAP_CURSOR = { 0.6, 0.6 }; CURSOR_X, CURSOR_Y = 601, 400")
+    c.ex("ArtPad_MapInput._scripts.OnMouseDown(ArtPad_MapInput, 'LeftButton')")
+    for i in range(1, 6):
+        c.ex("MAP_CURSOR = { %f, 0.6 }; CURSOR_X, CURSOR_Y = %f, 400" % (0.6 + i * 0.03, (0.6 + i * 0.03) * 1002))
+        c.ex("ArtPad_MapInput._scripts.OnUpdate(ArtPad_MapInput, 0.016)")
+        w.pump(1.2)
+    check(n(c) == 4, f"the copy arrived under the pen ({n(c)} strokes: 3 fetched and the one being drawn)")
+    c.ex("ArtPad_MapInput._scripts.OnMouseUp(ArtPad_MapInput, 'LeftButton')")
+    w.pump(4)
+    map_same(w, 37, "drawn through a copy")
+    check(n(a) == 4, "and the stroke reached everyone once finished")
+
+
+def test_world_map_sharing_follows_the_canvas():
+    w = World()
+    g = w.add("Gil")                      # guild mode, not in the party
+    p, q = w.add("Pat", guild=False), w.add("Quin", guild=False)
+    for c in (p, q):
+        c.ex('ArtPad:SetMode("RAID")')
+    w.group("party", "Pat", "Quin")
+    settle(w)
+    for c in (g, p, q):
+        c.ex(MAP_SIG)
+    n = lambda c, m=37: c.ev(f"MAP_N({m})")
+    map_open(p)
+    w.pump(3)
+    map_drag(p, ZIG)
+    w.pump(3)
+    check(n(q) == 1 and n(g) == 0, "in party mode the party gets it, nobody else")
+    check("your party" in p.ev("(function() local f = ArtPad_MapDrawButton._scripts.OnEnter; f(ArtPad_MapDrawButton); return TOOLTIP_TEXT() end)()"),
+          "the button says who it is shared with")
+
+    # Local mode and loopback: not shared
+    p.ex('ArtPad:SetMode("LOCAL")')
+    map_drag(p, zig(0.2))
+    w.pump(3)
+    check(n(q) == 1 and p.ev("ArtPad_Settings.MapDrawings[37][2].u") is True, "in Local mode a map stroke waits")
+    p.ex('ArtPad:SetMode("RAID")')
+    p.ex("ArtPad:SetLoopback(true)")
+    map_drag(p, zig(0.3))
+    w.pump(3)
+    check(n(q) == 1, "nor in loopback")
+    p.ex("ArtPad:SetLoopback(false)")
+    p.ex("WorldMapFrame:Hide()")
+    w.pump(70)
+    map_open(p)
+    w.pump(6)
+    check(n(q) == 3, f"back in the party, looking at the map sends what waited ({n(q)} of 3)")
+    map_same(w, 37, "party", "Pat", "Quin")
+
+    # Leaders only applies to map drawings as it does to the canvas
+    s = w.add("Strict", guild=False, settings={"Mode": "RAID", "AdminOnly": True})
+    s.ex(MAP_SIG)
+    w.group("party", "Pat", "Quin", "Strict")   # Pat leads
+    w.pump(5)
+    map_open(q)
+    w.pump(3)
+    map_drag(q, zig(0.4))
+    map_drag(p, zig(0.5))
+    w.pump(4)
+    check(n(q) == 5 and n(p) == 5, f"both strokes are on the party's map ({n(q)}, {n(p)})")
+    check(n(s) == 1, f"with leaders only, a member's map stroke is ignored and the leader's kept ({n(s)})")
+
+    # Rubbish from the network is ignored, not stored and not an error
+    q.ex("BEFORE = MAP_SIG(37)")
+    future = 1700000000 + int(w.now) + 100000
+    for msg in ("", "A", "A:37", "A:37:5:notdata", "Z:37:1:x", "D:37:%d:" % future, "A:99999999999:1:x",
+                "Q:37:x:y", "H:37:1:1", "G:37", "A:37:%d:" % future):
+        q.ex('ArtPad:OnMapMessage("ArtPadMap1", %r, "PARTY", "Pat-TestRealm")' % msg)
+    q.ex("""
+        local bad = ArtPad:EncodeData({
+            { "x.1", 255, 0, 0, 255, 300, { 5, 5, 20000, 5 } },      -- off the map
+            { "no id", 255, 0, 0, 255, 300, { 5, 5, 6, 6 } },
+            { "x.2", 255, 0, 0, 255, 300, { 5, 5, 6 } },             -- odd
+            { "x.3", 255, 0, 0, 255, 300, "points" },
+            "junk",
+            { "x.4", 9999, -4, "blue", 255, 99999999, { 5, 5, 600, 600 } },  -- kept, clamped
+        })
+        ArtPad:OnMapMessage("ArtPadMap1", "A:37:" .. GetServerTime() .. ":" .. bad, "PARTY", "Pat-TestRealm")
+    """)
+    check(n(q) == 6, f"of six strokes in a bad batch only the usable one is kept ({n(q) - 5} added)")
+    check(q.ev("ArtPad_Settings.MapDrawings[37][6].w") <= 0.06 and q.ev("ArtPad_Settings.MapDrawings[37][6].r") == 1,
+          "with its width and colour brought into range")
+    check(not any(".lua:" in m for m in q.chat()), "and nothing errors")
 
 
 def test_hide_button():

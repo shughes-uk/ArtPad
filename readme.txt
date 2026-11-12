@@ -16,7 +16,8 @@ Usage:
   /ap resetui    put the window back to its default size and spot
 
 Drawing on the world map: click the round pencil button on the world map, or hold Alt and
-drag on the map. These drawings are kept per map and only you see them.
+drag on the map. Each map has one drawing, shared with the same people as the canvas (your
+guild, or your party / raid) and kept between sessions. Options has a switch to stop sharing.
 
 Drag the title bar to move the window and the bottom-right corner to resize it. The pill in
 the title bar shows who you're sharing with; click it to switch or to hide your name.

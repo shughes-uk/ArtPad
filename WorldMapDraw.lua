@@ -1,5 +1,6 @@
 --[[
-	PROTOTYPE: drawing on the world map itself. Local only - nothing here is sent to anyone.
+	Drawing on the world map itself, shared with whoever the canvas is shared with (see
+	"Sharing" below).
 
 	The design follows the map's own grammar (Blizzard_WorldMap's Map Pin button):
 
@@ -19,7 +20,8 @@
 	  Holding Alt is a temporary pen without opening the toolbar.
 
 	Each map (zone, continent...) has its own drawing, stored in 0-1 map coordinates and kept
-	in ArtPad_Settings.MapDrawings.
+	in ArtPad_Settings.MapDrawings[mapID]: a list of strokes { id, r, g, b, a, w, p = points }
+	plus when it last changed (.t) and what is waiting to be sent (see "Sharing").
 
 	How it attaches to Blizzard's map (Blizzard_MapCanvas):
 	  WorldMapFrame.ScrollContainer.Child is the layer that scrolls and zooms with the map.
@@ -57,6 +59,7 @@ local FALLBACK_LEVEL = 2010 -- just above PIN_FRAME_LEVEL_MAP_HIGHLIGHT in Blizz
 local SIZES = { 3, 6, 11 } -- brush sizes offered in the pen's options (3 is ArtPad's default)
 local MAX_SIZE = 24 -- largest size Shift + wheel reaches
 local HISTORY = 50 -- undo steps kept per map (this session only)
+local PublishAdd, PublishRemove -- see "Sharing"
 
 -- 20x20 glyphs, origin bottom-left (see ArtPad.DrawGlyph)
 local PENCIL = { { 4, 4, 6, 9 }, { 4, 4, 9, 6 }, { 6, 9, 13, 16 }, { 9, 6, 16, 13 }, { 13, 16, 16, 13 } }
@@ -69,7 +72,7 @@ local wm = {
 	pool = {}, -- free line regions
 	count = 0, -- line regions in use (= segments drawn on the map on show)
 	linesOf = setmetatable({}, { __mode = "k" }), -- stroke -> its line regions
-	history = {}, -- mapID -> stack of earlier stroke lists
+	history = {}, -- mapID -> stack of things done here: { add = strokes } or { remove = { {stroke, index} } }
 	on = false, -- the toolbar is out
 	tool = "pen", -- "pen" or "eraser"
 	propagating = false, -- left presses also reach the map (see the top of the file)
@@ -89,17 +92,29 @@ local function Strokes(mapID, create)
 	return all[mapID]
 end
 
--- Remember this map's strokes as they are now, so the next change can be undone.
-local function Snapshot(mapID)
+local function IndexOf(list, id)
+	for i, s in ipairs(list) do
+		if s.id == id then return i end
+	end
+end
+
+-- Every stroke has an id that is unique among everyone's strokes.
+local function NewId()
+	if not wm.tag then wm.tag = ArtPad:NewSyncNonce() end
+	wm.seq = (wm.seq or 0) + 1
+	return wm.tag .. "." .. wm.seq
+end
+
+-- Remember something done to this map here, so it can be undone.
+local function Record(mapID, op)
 	local h = wm.history[mapID]
 	if not h then
 		h = {}
 		wm.history[mapID] = h
 	end
-	local copy = {}
-	for i, stroke in ipairs(Strokes(mapID) or {}) do copy[i] = stroke end
-	table.insert(h, copy)
+	table.insert(h, op)
 	if #h > HISTORY then table.remove(h, 1) end
+	return op
 end
 
 --[[ Rendering ]]
@@ -284,6 +299,7 @@ local function BeginStroke()
 	end
 	local c = ArtPad.brushColor
 	wm.stroke = {
+		id = NewId(), u = true, -- not sent until the pen lifts
 		r = c.r, g = c.g, b = c.b, a = c.a,
 		w = ArtPad_Settings.BrushSize * UnitsPerPixel() / W, -- as a fraction of the map's width
 		p = { x, y },
@@ -303,6 +319,7 @@ local function EndStroke()
 		ReleaseStroke(stroke)
 		DrawStroke(stroke, W, H)
 	end
+	PublishAdd(mapID, { stroke })
 end
 
 local function ExtendStroke()
@@ -317,8 +334,8 @@ local function ExtendStroke()
 		-- Still a click until the cursor leaves the spot it was pressed at; then the press was
 		-- a drag and the stroke becomes real, starting from that spot.
 		if not PressMoved() then return end
-		Snapshot(wm.strokeMap)
 		table.insert(Strokes(wm.strokeMap, true), stroke)
+		Record(wm.strokeMap, { add = { stroke } })
 		wm.strokeReal = true
 		if wm.press then wm.press.acted = true end
 		ArtPad:WorldMapHint(false)
@@ -342,8 +359,11 @@ end
 
 -- Drop whatever the mouse was in the middle of (the map changed, undo, the catcher hid).
 local function EndGesture()
+	local press = wm.press
 	wm.press, wm.mode = nil, nil
 	EndStroke()
+	-- one message for everything a drag of the eraser took off
+	if press and press.erased then PublishRemove(press.erasedMap, press.erased) end
 end
 
 -- The topmost stroke of this map within the eraser's radius of (x, y): index, stroke.
@@ -370,12 +390,20 @@ local function EraseAtCursor()
 	local changed = false
 	local index, stroke = StrokeAt(x, y)
 	while index do
-		if wm.press and wm.press.snapped ~= wm.mapID then
-			Snapshot(wm.mapID)
-			wm.press.snapped = wm.mapID
+		local press = wm.press
+		local op = press and press.op
+		if not op or press.erasedMap ~= wm.mapID then
+			op = Record(wm.mapID, { remove = {} }) -- one undo step per drag
+			if press then press.op, press.erased, press.erasedMap = op, {}, wm.mapID end
 		end
 		table.remove(Strokes(wm.mapID), index)
 		ReleaseStroke(stroke)
+		table.insert(op.remove, { stroke = stroke, index = index })
+		if press then
+			table.insert(press.erased, stroke)
+		else
+			PublishRemove(wm.mapID, { stroke })
+		end
 		changed = true
 		index, stroke = StrokeAt(x, y)
 	end
@@ -390,8 +418,28 @@ function ArtPad:WorldMapUndo()
 	EndGesture() -- a stroke still being drawn is finished first, and is then what gets undone
 	local h = wm.mapID and wm.history[wm.mapID]
 	if not h or #h == 0 then return end
-	local strokes = table.remove(h)
-	Drawings()[wm.mapID] = #strokes > 0 and strokes or nil
+	local op = table.remove(h)
+	local list = Strokes(wm.mapID, true)
+	if op.add then
+		-- take back what was drawn (unless someone has erased it since)
+		local taken = {}
+		for _, stroke in ipairs(op.add) do
+			local i = IndexOf(list, stroke.id)
+			if i then taken[#taken + 1] = table.remove(list, i) end
+		end
+		PublishRemove(wm.mapID, taken)
+	else
+		-- put back what was erased, where it was
+		local back = {}
+		for i = #op.remove, 1, -1 do
+			local r = op.remove[i]
+			if not IndexOf(list, r.stroke.id) then
+				table.insert(list, math.min(r.index, #list + 1), r.stroke)
+				back[#back + 1] = r.stroke
+			end
+		end
+		PublishAdd(wm.mapID, back)
+	end
 	self:WorldMapRedraw(true)
 	self:WorldMapRefreshBar()
 end
@@ -399,10 +447,15 @@ end
 -- Clearing is just another undoable step, so it needs no confirmation.
 function ArtPad:WorldMapClear()
 	EndGesture()
-	local strokes = wm.mapID and Strokes(wm.mapID)
-	if not strokes or #strokes == 0 then return end
-	Snapshot(wm.mapID)
-	Drawings()[wm.mapID] = nil
+	local list = wm.mapID and Strokes(wm.mapID)
+	if not list or #list == 0 then return end
+	local op, all = Record(wm.mapID, { remove = {} }), {}
+	for i, stroke in ipairs(list) do
+		op.remove[i] = { stroke = stroke, index = i }
+		all[i] = stroke
+	end
+	for i = #list, 1, -1 do list[i] = nil end -- the (empty) list stays: it holds when the map last changed
+	PublishRemove(wm.mapID, all)
 	self:WorldMapRedraw(true)
 	self:WorldMapRefreshBar()
 end
@@ -440,6 +493,390 @@ local function UpdatePropagation()
 	if want ~= wm.propagating and pcall(input.SetPropagateMouseClicks, input, want) then
 		wm.propagating = want
 	end
+end
+
+
+--[[ Sharing
+
+	A map's drawing is shared with whoever the canvas is shared with (guild, or party/raid).
+	There is one drawing per map; nothing about it is private.
+
+	Live:  each change is broadcast as it happens, on a prefix of its own:
+	         A:<map>:<t>:<strokes>    strokes added (one when the pen lifts; several on undo)
+	         D:<map>:<t>:<id>,<id>..  strokes removed (eraser, clear, undo)
+	       <t> is the map's new "last changed" time, the same for everyone who hears it.
+	Later: with nobody to tell (no guild or group, Local mode, sharing off), changes wait:
+	       added strokes are marked (stroke.u) and removed ids kept (list.gone), and both go
+	       out the next time that map is looked at with someone to tell. Drawings made before
+	       map drawings were shared are published the same way.
+	Catching up: looking at a map asks who has a newer copy of it.
+	         Q:<map>:<t>:<n>          broadcast: my copy's time and stroke count
+	         H:<map>:<t>:<n>          whisper back from anyone whose copy is newer (or fuller)
+	         G:<map>                  whisper to the best of those: send it
+	         <map>:<t>:<strokes>      the copy, on the copy prefix
+	       A copy replaces what was known of the map, except for what is still waiting to be
+	       sent and whatever arrived live in the meantime.
+]]
+
+local MAP_PREFIX, COPY_PREFIX = "ArtPadMap1", "ArtPadMapC1"
+local ASK_EVERY = 60 -- seconds before the same map is asked about again
+local ASK_DWELL = 0.6 -- seconds a map must stay on show before it is asked about
+local ASK_COLLECT = 1.5 -- seconds to wait for offers
+local COPY_WAIT = 45 -- seconds to wait for a copy that was offered
+local MAX_STROKES, MAX_POINTS, MAX_MAPS = 1500, 1500, 400 -- what is accepted from others
+local BATCH = 40 -- strokes per message when a backlog is published
+wm.asked = {} -- "<channel>:<map>" -> when we last asked
+
+-- The channel map drawings go out on, or nil when there is nobody to share with.
+local function Audience()
+	if ArtPad_Settings.MapShare == false or ArtPad.loopback then return nil end
+	local channel = ArtPad:GetChannel()
+	if not channel or channel == "YELL" then return nil end
+	return channel
+end
+
+local AUDIENCE_NAMES = { GUILD = "your guild", PARTY = "your party", RAID = "your raid", INSTANCE_CHAT = "your group" }
+
+-- For the round button's tooltip.
+local function SharingText()
+	local channel = Audience()
+	if channel then
+		return "Draw on the map. Drawings are shared with " .. (AUDIENCE_NAMES[channel] or "your group") .. "."
+	end
+	return "Draw on the map. Drawings are shared when you are in a guild or group."
+end
+
+-- The map's next "last changed" time: now, and later than any time it has had.
+local function Stamp(list)
+	local t = math.max(GetServerTime(), (list.t or 0) + 1)
+	list.t = t
+	return t
+end
+
+-- Strokes everyone knows about (not still waiting to be sent).
+local function PublicCount(list)
+	local n = 0
+	for _, s in ipairs(list) do
+		if not s.u then n = n + 1 end
+	end
+	return n
+end
+
+-- Strokes as they travel: whole numbers only (they serialise much shorter).
+local function Pack(strokes)
+	local out = {}
+	for _, s in ipairs(strokes) do
+		local p = {}
+		for i, v in ipairs(s.p) do p[i] = math.floor(v * 10000 + 0.5) end
+		out[#out + 1] = {
+			s.id, math.floor(s.r * 255 + 0.5), math.floor(s.g * 255 + 0.5), math.floor(s.b * 255 + 0.5),
+			math.floor(s.a * 255 + 0.5), math.floor(s.w * 100000 + 0.5), p,
+		}
+	end
+	return ArtPad:EncodeData(out)
+end
+
+local function Channel(v)
+	v = tonumber(v) or 255
+	if v ~= v then v = 255 end
+	return math.max(0, math.min(255, v)) / 255
+end
+
+-- One stroke from someone else: checked, or nil.
+local function Sanitize(rec)
+	local id, p = rec[1], rec[7]
+	if type(id) ~= "string" or #id > 24 or not id:match("^%w+%.%d+$") or type(p) ~= "table" then return nil end
+	local n = #p
+	if n < 4 or n % 2 ~= 0 or n > MAX_POINTS * 2 then return nil end
+	local pts = {}
+	for i = 1, n do
+		local v = p[i]
+		if type(v) ~= "number" or v ~= v or v < 0 or v > 10000 then return nil end
+		pts[i] = math.floor(v + 0.5) / 10000
+	end
+	local w = tonumber(rec[6]) or 0
+	if w ~= w then w = 0 end
+	return {
+		id = id, r = Channel(rec[2]), g = Channel(rec[3]), b = Channel(rec[4]), a = Channel(rec[5]),
+		w = math.max(0.0002, math.min(0.06, w / 100000)), p = pts,
+	}
+end
+
+local function Unpack(data)
+	local list = ArtPad:DecodeData(data)
+	if type(list) ~= "table" then return nil end
+	local out = {}
+	for _, rec in ipairs(list) do
+		local s = type(rec) == "table" and Sanitize(rec)
+		if s then out[#out + 1] = s end
+		if #out >= MAX_STROKES then break end
+	end
+	return out
+end
+
+local function Send(msg, target)
+	local channel = Audience()
+	if not channel then return false end
+	if target then
+		ArtPad:SendCommMessage(MAP_PREFIX, msg, "WHISPER", target, "NORMAL")
+	else
+		ArtPad:SendCommMessage(MAP_PREFIX, msg, channel, nil, "NORMAL")
+	end
+	return true
+end
+
+-- Strokes were added to a map here: tell everyone, or mark them to be told later.
+function PublishAdd(mapID, strokes)
+	local list = Strokes(mapID)
+	if not list or #strokes == 0 then return end
+	if Audience() then
+		for _, s in ipairs(strokes) do s.u = nil end
+		for first = 1, #strokes, BATCH do
+			local batch = {}
+			for i = first, math.min(#strokes, first + BATCH - 1) do batch[#batch + 1] = strokes[i] end
+			Send(("A:%d:%d:%s"):format(mapID, Stamp(list), Pack(batch)))
+		end
+	else
+		for _, s in ipairs(strokes) do
+			if list.gone and list.gone[s.id] then
+				list.gone[s.id] = nil -- removed and put back while nobody was listening: no news
+			else
+				s.u = true
+			end
+		end
+	end
+end
+
+-- Strokes were removed from a map here: tell everyone, or remember to.
+function PublishRemove(mapID, strokes)
+	local ids = {}
+	for _, s in ipairs(strokes) do
+		if s.id and not s.u then ids[#ids + 1] = s.id end -- nobody else has the unsent ones
+	end
+	if #ids == 0 then return end
+	local list = Strokes(mapID, true)
+	if Audience() then
+		Send(("D:%d:%d:%s"):format(mapID, Stamp(list), table.concat(ids, ",")))
+	else
+		list.gone = list.gone or {}
+		for _, id in ipairs(ids) do list.gone[id] = true end
+	end
+end
+
+-- Send what has been waiting for someone to tell.
+local function PublishBacklog(mapID)
+	local list = Strokes(mapID)
+	if not list or not Audience() then return end
+	if list.gone then
+		local ids = {}
+		for id in pairs(list.gone) do ids[#ids + 1] = id end
+		table.sort(ids)
+		list.gone = nil
+		if #ids > 0 then Send(("D:%d:%d:%s"):format(mapID, Stamp(list), table.concat(ids, ","))) end
+	end
+	local waiting = {}
+	for _, s in ipairs(list) do
+		if s.u and s ~= wm.stroke then waiting[#waiting + 1] = s end
+	end
+	PublishAdd(mapID, waiting)
+end
+
+-- A map changed from outside (someone's stroke, a copy): show it.
+local function ShowRemote(mapID, added, removed)
+	if not wm.ready or mapID ~= wm.mapID then return end
+	if removed then ReleaseStroke(removed) end
+	if added then
+		local W, H = CanvasSize()
+		if WorldMapFrame:IsShown() and W > 0 and H > 0 then
+			DrawStroke(added, W, H)
+		else
+			wm.drawnW = nil -- drawn when the map is next opened
+		end
+	end
+end
+
+local function MapCount()
+	local n = 0
+	for _ in pairs(Drawings()) do n = n + 1 end
+	return n
+end
+
+local function Settle(catch)
+	if wm.catch ~= catch then return end
+	wm.catch = nil
+	PublishBacklog(catch.mapID)
+	ArtPad:WorldMapAsk() -- the map on show now, if that is another one
+end
+
+-- Take a copy of a map from someone who has a newer one.
+local function ApplyCopy(catch, t, strokes)
+	local mapID = catch.mapID
+	local old = Strokes(mapID, true)
+	local new, seen = {}, {}
+	for _, s in ipairs(strokes) do
+		if not seen[s.id] and not (old.gone and old.gone[s.id]) and not catch.removed[s.id] then
+			seen[s.id] = true
+			new[#new + 1] = s
+		end
+	end
+	-- kept from what we had: strokes nobody has been told about yet, the one under the pen,
+	-- and whatever arrived live while the copy was on its way
+	for _, s in ipairs(old) do
+		if s.id and not seen[s.id] and (s.u or s == wm.stroke or catch.added[s.id]) then
+			seen[s.id] = true
+			new[#new + 1] = s
+		end
+	end
+	new.t = math.max(old.t or 0, t)
+	new.gone = old.gone
+	Drawings()[mapID] = new
+	if mapID == wm.mapID then
+		ArtPad:WorldMapRedraw(true)
+		ArtPad:WorldMapRefreshBar()
+	end
+end
+
+-- Ask who has a newer copy of the map on show (at most once a minute per map and audience).
+function ArtPad:WorldMapAsk()
+	if not wm.ready or not WorldMapFrame:IsShown() or wm.catch then return end
+	local channel, mapID = Audience(), WorldMapFrame:GetMapID()
+	if not channel or not mapID then return end
+	local key = channel .. ":" .. mapID
+	local now = GetTime()
+	if wm.asked[key] and now - wm.asked[key] < ASK_EVERY then return end
+	wm.asked[key] = now
+	local list = Strokes(mapID)
+	local catch = { mapID = mapID, key = key, phase = "collect", offers = {}, added = {}, removed = {} }
+	wm.catch = catch
+	Send(("Q:%d:%d:%d"):format(mapID, list and list.t or 0, list and PublicCount(list) or 0))
+	C_Timer.After(ASK_COLLECT, function()
+		if wm.catch ~= catch then return end
+		local best
+		for _, offer in ipairs(catch.offers) do
+			if not best or offer.t > best.t or (offer.t == best.t and offer.n > best.n) then best = offer end
+		end
+		if not best then
+			Settle(catch) -- nobody has anything newer
+			return
+		end
+		catch.phase, catch.source = "fetch", ArtPad.ShortName(best.sender)
+		Send(("G:%d"):format(mapID), best.sender)
+		C_Timer.After(COPY_WAIT, function()
+			if wm.catch == catch then
+				wm.asked[key] = nil -- it never came: ask again next time
+				Settle(catch)
+			end
+		end)
+	end)
+end
+
+-- The map on show changed: ask about it once it has stayed up for a moment.
+local function QueueAsk()
+	local mapID = WorldMapFrame:GetMapID()
+	C_Timer.After(ASK_DWELL, function()
+		if WorldMapFrame:IsShown() and WorldMapFrame:GetMapID() == mapID then ArtPad:WorldMapAsk() end
+	end)
+end
+
+function ArtPad:OnMapMessage(_, msg, disType, sender)
+	if #msg > 300000 or not Audience() or self:IsSelf(sender) then return end
+	local kind, mapID, rest = msg:match("^(%a):(%d+):?(.*)$")
+	mapID = tonumber(mapID)
+	if not kind or not mapID or mapID < 1 or mapID > 9999999 then return end
+	local whispered = disType == "WHISPER"
+	if kind == "H" or kind == "G" then
+		if not whispered then return end
+	elseif not self:AcceptsDistribution(disType) then
+		return
+	end
+	local list = Strokes(mapID)
+	local catch = wm.catch and wm.catch.mapID == mapID and wm.catch or nil
+
+	if kind == "A" or kind == "D" then
+		if not self:ValidateSender(sender) then return end
+		local t, body = rest:match("^(%d+):(.*)$")
+		t = tonumber(t)
+		-- a time from the future would make this copy the newest for ever
+		if not t or t > GetServerTime() + 300 then return end
+		if kind == "A" then
+			local strokes = Unpack(body)
+			if not strokes or #strokes == 0 then return end
+			if not list then
+				if MapCount() >= MAX_MAPS then return end
+				list = Strokes(mapID, true)
+			end
+			for _, s in ipairs(strokes) do
+				if #list < MAX_STROKES and not IndexOf(list, s.id) and not (list.gone and list.gone[s.id]) then
+					table.insert(list, s)
+					if catch then catch.added[s.id] = true end
+					ShowRemote(mapID, s)
+				end
+			end
+		else
+			if not list then return end
+			for id in body:gmatch("[^,]+") do
+				local i = IndexOf(list, id)
+				if i then ShowRemote(mapID, nil, table.remove(list, i)) end
+				if catch then catch.removed[id] = true end
+			end
+		end
+		list.t = math.max(list.t or 0, t)
+		if mapID == wm.mapID then self:WorldMapRefreshBar() end
+
+	elseif kind == "Q" then
+		local t, n = rest:match("^(%d+):(%d+)$")
+		t, n = tonumber(t), tonumber(n)
+		if not t then return end
+		local mine, count = list and list.t or 0, list and PublicCount(list) or 0
+		if mine > t or (mine == t and count > n) then
+			Send(("H:%d:%d:%d"):format(mapID, mine, count), sender)
+		elseif t > mine or n > count then
+			-- they have the newer one: ask for it ourselves (now, if we are looking at it)
+			for key in pairs(wm.asked) do
+				if key:match(":(%d+)$") == tostring(mapID) then wm.asked[key] = nil end
+			end
+			if wm.ready and WorldMapFrame:IsShown() and WorldMapFrame:GetMapID() == mapID then QueueAsk() end
+		end
+
+	elseif kind == "H" then
+		local t, n = rest:match("^(%d+):(%d+)$")
+		t, n = tonumber(t), tonumber(n)
+		if t and catch and catch.phase == "collect" and t <= GetServerTime() + 300 and self:ValidateSender(sender) then
+			table.insert(catch.offers, { sender = sender, t = t, n = n })
+		end
+
+	elseif kind == "G" then
+		if not list then return end
+		-- one copy per person and map every few seconds is plenty
+		wm.served = wm.served or {}
+		local key, now = sender .. ":" .. mapID, GetTime()
+		if wm.served[key] and now - wm.served[key] < 10 then return end
+		wm.served[key] = now
+		local public = {}
+		for _, s in ipairs(list) do
+			if not s.u then public[#public + 1] = s end
+		end
+		self:SendCommMessage(COPY_PREFIX, ("%d:%d:%s"):format(mapID, list.t or 0, Pack(public)), "WHISPER", sender, "BULK")
+	end
+end
+
+function ArtPad:OnMapCopy(_, msg, disType, sender)
+	local catch = wm.catch
+	if disType ~= "WHISPER" or #msg > 300000 or not catch or catch.phase ~= "fetch" or not Audience() then return end
+	local mapID, t, body = msg:match("^(%d+):(%d+):(.*)$")
+	mapID, t = tonumber(mapID), tonumber(t)
+	if mapID ~= catch.mapID or self.ShortName(sender) ~= catch.source then return end
+	local strokes = Unpack(body)
+	if strokes and t <= GetServerTime() + 300 then ApplyCopy(catch, t, strokes) end
+	Settle(catch)
+end
+
+-- Sharing switched on or off (Options): what is known of other people's copies is stale.
+function ArtPad:SetMapSharing(on)
+	ArtPad_Settings.MapShare = on and true or false
+	wm.asked = {}
+	wm.catch = nil
+	if on then self:WorldMapAsk() end
 end
 
 --[[ The cursor shows the tool ]]
@@ -687,7 +1124,8 @@ local function MapTooltip(frame, title, text, instructions, hide)
 		if hide and hide() then return end
 		GameTooltip:SetOwner(f, "ANCHOR_BOTTOM")
 		GameTooltip:SetText(title, 1, 1, 1)
-		if text then GameTooltip:AddLine(text, 1, 0.82, 0, true) end
+		local body = type(text) == "function" and text() or text
+		if body then GameTooltip:AddLine(body, 1, 0.82, 0, true) end
 		if instructions then
 			GameTooltip:AddLine(" ")
 			for _, line in ipairs(instructions) do GameTooltip:AddLine(line, 0.1, 1, 0.1, true) end
@@ -758,7 +1196,7 @@ local function BuildEntry(self, map)
 	b:RegisterForClicks("LeftButtonUp")
 	b:SetScript("OnClick", function() self:WorldMapSetActive(not wm.on) end)
 	-- worded after Blizzard's Map Pin button, which sits in the same stack
-	MapTooltip(b, "Map Drawing", "Draw on the map. Your drawings are only visible to you.",
+	MapTooltip(b, "Map Drawing", SharingText,
 		{ "Click this button and then drag on the map to draw or <Alt drag directly on the map>" })
 	return b
 end
@@ -948,6 +1386,23 @@ end
 
 function ArtPad:SetupWorldMapDraw()
 	if wm.ready then return end
+	if not wm.listening then
+		-- other people's map drawings are taken in whether or not the map has been opened yet
+		wm.listening = true
+		self:RegisterComm(MAP_PREFIX, "OnMapMessage")
+		self:RegisterComm(COPY_PREFIX, "OnMapCopy")
+		-- drawings from before they were shared: give every stroke an id; they go out the
+		-- first time their map is looked at with someone to tell
+		for _, list in pairs(Drawings()) do
+			if type(list) == "table" then
+				for _, stroke in ipairs(list) do
+					if type(stroke) == "table" and not stroke.id then
+						stroke.id, stroke.u = NewId(), true
+					end
+				end
+			end
+		end
+	end
 	local map = WorldMapFrame
 	local container = map and map.ScrollContainer
 	if not (container and container.Child and container.GetNormalizedCursorPosition and map.GetMapID) then
@@ -1053,6 +1508,7 @@ function ArtPad:SetupWorldMapDraw()
 		EndGesture() -- a drag doesn't carry over to another map
 		self:WorldMapRedraw()
 		self:WorldMapRefreshBar()
+		QueueAsk()
 	end)
 	if map.OnCanvasScaleChanged then
 		hooksecurefunc(map, "OnCanvasScaleChanged", function()
@@ -1064,6 +1520,7 @@ function ArtPad:SetupWorldMapDraw()
 		PlaceEntry(map)
 		self:WorldMapRedraw()
 		self:WorldMapUpdateInput()
+		QueueAsk()
 	end)
 	-- like the Map Pin button: closing the map puts the tools away
 	map:HookScript("OnHide", function()

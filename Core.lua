@@ -43,7 +43,8 @@ local defaults = {
 	View = false, -- { scale, x, y } of the canvas in the window; false = fit
 	WindowSize = false, -- { w, h }; false = default
 	MapDim = 0.4, -- darken the map backdrop so drawings stand out
-	MapDrawings = {}, -- prototype: world map drawings, mapID -> strokes (WorldMapDraw.lua)
+	MapDrawings = {}, -- world map drawings, mapID -> strokes (WorldMapDraw.lua)
+	MapShare = true, -- share them with the guild or group
 	BrushSize = 3,
 	Color = { r = 1, g = 1, b = 1, a = 1 },
 	RecentColors = {},
@@ -169,7 +170,7 @@ function ArtPad:OnInitialize()
 		-- is checked for shape where it is read.
 		local old = ArtPad_Settings
 		ArtPad_Settings = {}
-		for _, key in ipairs({ "PlaceCanvases", "MapDrawings", "FullNames", "MapHintSeen" }) do
+		for _, key in ipairs({ "PlaceCanvases", "MapDrawings", "MapShare", "FullNames", "MapHintSeen" }) do
 			ArtPad_Settings[key] = old[key]
 		end
 	end
