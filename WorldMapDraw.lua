@@ -71,6 +71,7 @@ local TRASH = {
 
 local wm = {
 	pool = {}, -- free line regions
+	piecePool = {}, -- free brush pieces (textures)
 	count = 0, -- line regions in use (= segments drawn on the map on show)
 	linesOf = setmetatable({}, { __mode = "k" }), -- stroke -> its line regions
 	history = {}, -- mapID -> stack of things done here: { add = strokes } or { remove = { {stroke, index} } }
@@ -136,8 +137,9 @@ local function UnitsPerPixel()
 	return UIParent:GetEffectiveScale() / wm.canvas:GetEffectiveScale()
 end
 
--- How many segments this map may hold right now (stored and drawn alike).
+-- How many pieces this map may hold right now (stored and drawn alike).
 local function Budget()
+	if wm.brush then return wm.maxPieces end
 	local main = ArtPad.window and ArtPad.window:IsShown() and ArtPad.quadsInUse or 0
 	return math.max(MIN_LINES, math.min(MAX_LINES, TOTAL_QUADS - main))
 end
@@ -147,6 +149,255 @@ local function WarnFull()
 	wm.warnedFull = true
 	ArtPad:Message("This map is full.")
 end
+
+
+--[[ The brush
+
+	How a stroke is drawn when the client can do it (wm.brush; otherwise the plain Lines below).
+	Worked out in /ap lab and confirmed there in game, panel by panel:
+
+	  - The points are joined by a centripetal Catmull-Rom curve, broken where the stroke turns
+	    sharply so that corners stay corners.
+	  - The curve is drawn as a ribbon: one Texture per piece, its four corners moved with
+	    SetVertexOffset onto two rails either side of the curve, so that neighbouring pieces
+	    share an edge exactly. No gaps outside a bend, no overlap inside it.
+	  - The ribbon's edges fade over one screen pixel. Every piece samples the same corner of
+	    brush.tga, which is clear along one row and one column: distance from one side of the
+	    stroke runs along u, from the other side along v.
+	  - Ends and very sharp joins are round discs from the same file.
+	  - Underneath lies the same shape again, a little wider, in whichever of light or dark
+	    stands out from the ink: an outline that keeps a stroke readable on any part of a map.
+
+	Everything a stroke draws uses the one texture file: regions with different textures do not
+	keep their order (a textured line drawn after a plain one came out underneath it).
+	Nothing here changes what is saved or sent: other versions draw the same points their way.
+]]
+
+local BRUSH = ArtPad.MEDIA .. "brush" -- 256 x 256: see tests/make_brush_tga.py
+local ATLAS = 256
+local PROFILE_MAX = 126 -- how far into the soft-edge corner a wide stroke may sample (texels)
+local DISCS = { { 8, 112, 128 }, { 16, 96, 128 }, { 32, 64, 128 }, { 64, 0, 128 }, { 128, 128, 0 } } -- { cell, left, top }
+local OUTLINE = 1.5 -- screen pixels of outline either side of the ink
+local STRING = 3 -- screen pixels of slack in the steadied pen
+local CURVE_ERROR = 0.25 -- screen pixels a flattened curve may stray from the true one
+local MAX_CURVE_PIECES = 8 -- per pair of points
+local MAX_PIECES = 12000 -- per map (the map is its own off-screen buffer, with its own limit)
+local LIVE_KEEP, LIVE_TAIL = 60, 20 -- a stroke being drawn redraws only its last points (see DrawLive)
+
+local function AcquirePiece(sublevel)
+	if wm.count >= Budget() then return nil end
+	local t = table.remove(wm.piecePool)
+	if not t then
+		t = wm.layer:CreateTexture(nil, "ARTWORK")
+		if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(false) end
+		if t.SetTexelSnappingBias then t:SetTexelSnappingBias(0) end
+		t:SetTexture(BRUSH, "CLAMP", "CLAMP", "LINEAR")
+		t.piece = true
+	end
+	t:ClearVertexOffsets()
+	t:SetDrawLayer("ARTWORK", sublevel)
+	t.ink = sublevel > 0
+	t:Show()
+	wm.count = wm.count + 1
+	return t
+end
+
+-- The colour that stands out from an ink: pale under dark ink, dark under light ink.
+local function OutlineColour(r, g, b)
+	if 0.299 * r + 0.587 * g + 0.114 * b < 0.4 then return 0.93, 0.86, 0.7, 0.6 end
+	return 0.1, 0.07, 0.04, 0.6
+end
+
+-- The knots (xs, ys) joined by a centripetal Catmull-Rom curve and flattened: returns the
+-- points of the polyline. `error` is how far it may stray from the curve.
+local function Curve(xs, ys, n, error)
+	if n < 3 then return xs, ys, n end
+	local corner = {}
+	for i = 2, n - 1 do
+		local ux, uy, vx, vy = xs[i] - xs[i - 1], ys[i] - ys[i - 1], xs[i + 1] - xs[i], ys[i + 1] - ys[i]
+		local lu, lv = math.sqrt(ux * ux + uy * uy), math.sqrt(vx * vx + vy * vy)
+		corner[i] = lu > 0 and lv > 0 and (ux * vx + uy * vy) / (lu * lv) < 0.35 -- over about 70 degrees
+	end
+	local ox, oy, m = { xs[1] }, { ys[1] }, 1
+	for i = 1, n - 1 do
+		local p1x, p1y, p2x, p2y = xs[i], ys[i], xs[i + 1], ys[i + 1]
+		local dx, dy = p2x - p1x, p2y - p1y
+		local d12 = math.sqrt(math.sqrt(dx * dx + dy * dy))
+		local m1x, m1y, m2x, m2y = dx, dy, dx, dy
+		if i > 1 and not corner[i] and d12 > 0 then
+			local p0x, p0y = xs[i - 1], ys[i - 1]
+			local d01 = math.sqrt(math.sqrt((p1x - p0x) ^ 2 + (p1y - p0y) ^ 2))
+			if d01 > 0 then
+				m1x = dx + d12 * ((p1x - p0x) / d01 - (p2x - p0x) / (d01 + d12))
+				m1y = dy + d12 * ((p1y - p0y) / d01 - (p2y - p0y) / (d01 + d12))
+			end
+		end
+		if i < n - 1 and not corner[i + 1] and d12 > 0 then
+			local p3x, p3y = xs[i + 2], ys[i + 2]
+			local d23 = math.sqrt(math.sqrt((p3x - p2x) ^ 2 + (p3y - p2y) ^ 2))
+			if d23 > 0 then
+				m2x = dx + d12 * ((p3x - p2x) / d23 - (p3x - p1x) / (d12 + d23))
+				m2y = dy + d12 * ((p3y - p2y) / d23 - (p3y - p1y) / (d12 + d23))
+			end
+		end
+		-- how far the curve bows from its chord decides how many pieces it gets
+		local bow = 4 / 27 * (math.sqrt((m1x - dx) ^ 2 + (m1y - dy) ^ 2) + math.sqrt((m2x - dx) ^ 2 + (m2y - dy) ^ 2))
+		local pieces = math.max(1, math.min(MAX_CURVE_PIECES, math.ceil(math.sqrt(bow / error))))
+		for k = 1, pieces do
+			local t = k / pieces
+			local t2, t3 = t * t, t * t * t
+			local a, b, c, d = 2 * t3 - 3 * t2 + 1, t3 - 2 * t2 + t, -2 * t3 + 3 * t2, t3 - t2
+			m = m + 1
+			ox[m], oy[m] = a * p1x + b * m1x + c * p2x + d * m2x, a * p1y + b * m1y + c * p2y + d * m2y
+		end
+	end
+	return ox, oy, m
+end
+
+-- A round disc of `diameter` (layer units) at (x, y): an end, or a join too sharp to mitre.
+local function Disc(own, x, y, diameter, perUnit, r, g, b, a, sublevel)
+	local t = AcquirePiece(sublevel)
+	if not t then return false end
+	-- the smallest drawing of the disc that is at least as big as it will be on screen
+	local cell, left, top = 128, 128, 0
+	for _, d in ipairs(DISCS) do
+		if d[1] - 4 >= diameter * perUnit then
+			cell, left, top = d[1], d[2], d[3]
+			break
+		end
+	end
+	local size = diameter * cell / (cell - 4)
+	t:SetSize(size, size)
+	t:ClearAllPoints()
+	t:SetPoint("CENTER", wm.layer, "TOPLEFT", x, y)
+	t:SetTexCoord(left / ATLAS, (left + cell) / ATLAS, top / ATLAS, (top + cell) / ATLAS)
+	t:SetVertexColor(r, g, b, a)
+	own[#own + 1] = t
+	return true
+end
+
+-- One pass of a ribbon along the polyline (xs, ys)[1..n]: `width` across (layer units), with
+-- a round end where asked. Returns false if the map ran out of pieces.
+local function Ribbon(own, xs, ys, n, width, perUnit, r, g, b, a, sublevel, capStart, capEnd, round)
+	if n < 2 then
+		return n < 1 or Disc(own, xs[1], ys[1], width, perUnit, r, g, b, a, sublevel)
+	end
+	local pad = 1 / perUnit -- the soft edge lies one screen pixel outside the ink
+	local half = width / 2 + pad
+	local far = math.min(PROFILE_MAX, 2 + width * perUnit) / ATLAS
+	local ax, ay = (xs[1] + xs[n]) / 2, (ys[1] + ys[n]) / 2 -- every piece hangs off this one spot
+	-- the two rails: at each point, out along the mitre of the pieces that meet there
+	local lx, ly, rx, ry, cut = {}, {}, {}, {}, {}
+	local pnx, pny -- the normal of the piece before
+	for i = 1, n do
+		local nx, ny
+		if i < n then
+			local dx, dy = xs[i + 1] - xs[i], ys[i + 1] - ys[i]
+			local len = math.sqrt(dx * dx + dy * dy)
+			if len > 0 then
+				nx, ny = -dy / len, dx / len
+			else
+				nx, ny = pnx or 0, pny or 1
+			end
+		end
+		local mx, my, scale = nx or pnx, ny or pny, 1
+		if i > 1 and i < n then
+			local sx, sy = pnx + nx, pny + ny
+			local len = math.sqrt(sx * sx + sy * sy)
+			local c = len > 0.001 and (sx * pnx + sy * pny) / len or 0
+			if c < 0.5 then -- a turn of more than about 120 degrees can't be mitred
+				cut[i] = true
+				mx, my = pnx, pny
+			else
+				mx, my, scale = sx / len, sy / len, 1 / c
+			end
+		end
+		lx[i], ly[i] = xs[i] + mx * half * scale, ys[i] + my * half * scale
+		rx[i], ry[i] = xs[i] - mx * half * scale, ys[i] - my * half * scale
+		if cut[i] then cut[i] = { nx, ny } end -- the piece after a cut starts square to itself
+		pnx, pny = nx or pnx, ny or pny
+	end
+	for i = 1, n - 1 do
+		local l1x, l1y, r1x, r1y = lx[i], ly[i], rx[i], ry[i]
+		if cut[i] then
+			local nx, ny = cut[i][1], cut[i][2]
+			l1x, l1y, r1x, r1y = xs[i] + nx * half, ys[i] + ny * half, xs[i] - nx * half, ys[i] - ny * half
+		end
+		local t = AcquirePiece(sublevel)
+		if not t then return false end
+		t:SetSize(2, 2)
+		t:ClearAllPoints()
+		t:SetPoint("CENTER", wm.layer, "TOPLEFT", ax, ay)
+		t:SetVertexOffset(1, l1x - ax + 1, l1y - ay - 1) -- upper left
+		t:SetVertexOffset(2, r1x - ax + 1, r1y - ay + 1) -- lower left
+		t:SetVertexOffset(3, lx[i + 1] - ax - 1, ly[i + 1] - ay - 1) -- upper right
+		t:SetVertexOffset(4, rx[i + 1] - ax - 1, ry[i + 1] - ay + 1) -- lower right
+		t:SetTexCoord(far, 0, 0, far, far, 0, 0, far)
+		t:SetVertexColor(r, g, b, a)
+		own[#own + 1] = t
+		if cut[i + 1] and round and not Disc(own, xs[i + 1], ys[i + 1], width, perUnit, r, g, b, a, sublevel) then return false end
+	end
+	if round then
+		if capStart and not Disc(own, xs[1], ys[1], width, perUnit, r, g, b, a, sublevel) then return false end
+		if capEnd and not Disc(own, xs[n], ys[n], width, perUnit, r, g, b, a, sublevel) then return false end
+	end
+	return true
+end
+
+-- Draw a stroke's knots [first, last] with the brush: the outline, then the ink over it.
+-- `smooth` joins them with the curve (a finished stroke); otherwise they are joined directly
+-- (a stroke still being drawn has a point every few pixels: it is smooth as it is).
+local function DrawInk(stroke, W, H, first, last, capStart, capEnd, smooth)
+	local own = wm.linesOf[stroke]
+	if not own then
+		own = {}
+		wm.linesOf[stroke] = own
+	end
+	local unit = UnitsPerPixel()
+	local p = stroke.p
+	local xs, ys, n = {}, {}, 0
+	for i = first, last do
+		n = n + 1
+		xs[n], ys[n] = p[2 * i - 1] * W, -p[2 * i] * H
+	end
+	if smooth then xs, ys, n = Curve(xs, ys, n, CURVE_ERROR * unit) end
+	local width = math.max(0.5, stroke.w * W)
+	-- round ends and joins overlap the ribbon, which shows in see-through ink: it goes without
+	local round = stroke.a >= 0.95
+	local r, g, b, a = OutlineColour(stroke.r, stroke.g, stroke.b)
+	return Ribbon(own, xs, ys, n, width + 2 * OUTLINE * unit, 1 / unit, r, g, b, a * stroke.a, 0, capStart, capEnd, round)
+		and Ribbon(own, xs, ys, n, width, 1 / unit, stroke.r, stroke.g, stroke.b, stroke.a, 1, capStart, capEnd, round)
+end
+
+-- Give back a stroke's pieces after the first `keep`.
+local function ReleaseFrom(stroke, keep)
+	local own = wm.linesOf[stroke]
+	if not own then return end
+	for i = #own, keep + 1, -1 do
+		own[i]:Hide()
+		table.insert(own[i].piece and wm.piecePool or wm.pool, own[i])
+		own[i] = nil
+		wm.count = wm.count - 1
+	end
+end
+
+-- A stroke under the pen is redrawn as it grows, but only its last points: what lies further
+-- back is left as drawn (stroke.frozen pieces, up to knot stroke.liveFrom), so that a long
+-- stroke costs no more per frame than a short one. It is drawn whole, curved, when it ends.
+local function DrawLive(stroke, W, H)
+	local n = #stroke.p / 2
+	local from = stroke.liveFrom or 1
+	ReleaseFrom(stroke, stroke.frozen or 0)
+	if n - from > LIVE_KEEP then
+		local upTo = n - LIVE_TAIL
+		DrawInk(stroke, W, H, from, upTo, from == 1, false, false)
+		stroke.frozen, stroke.liveFrom = #wm.linesOf[stroke], upTo
+		from = upTo
+	end
+	return DrawInk(stroke, W, H, from, n, from == 1, true, false)
+end
+
+--[[ Plain lines: how strokes are drawn where the brush isn't available ]]
 
 local function AcquireLine()
 	if wm.count >= Budget() then return nil end
@@ -200,6 +451,11 @@ local function DrawStroke(stroke, W, H)
 		DrawMarker(stroke, W, H)
 		return
 	end
+	if wm.brush then
+		stroke.frozen, stroke.liveFrom = nil, nil
+		DrawInk(stroke, W, H, 1, #stroke.p / 2, true, true, true)
+		return
+	end
 	for i = 1, #stroke.p - 3, 2 do
 		if not DrawSegment(stroke, i, W, H) then return end
 	end
@@ -209,10 +465,9 @@ end
 local function ReleaseStroke(stroke)
 	local own = wm.linesOf[stroke]
 	if not own then return end
-	local pool = stroke.k and wm.markerPool or wm.pool
 	for i = #own, 1, -1 do
 		own[i]:Hide()
-		table.insert(pool, own[i])
+		table.insert(stroke.k and wm.markerPool or own[i].piece and wm.piecePool or wm.pool, own[i])
 	end
 	wm.count = wm.count - #own
 	wm.linesOf[stroke] = nil
@@ -254,7 +509,13 @@ local function Tint(stroke, lit)
 			r, g, b, a = 1, 1, 1, 1
 		end
 	end
-	for _, line in ipairs(wm.linesOf[stroke] or {}) do line:SetColorTexture(r, g, b, a) end
+	for _, region in ipairs(wm.linesOf[stroke] or {}) do
+		if not region.piece then
+			region:SetColorTexture(r, g, b, a)
+		elseif region.ink then
+			region:SetVertexColor(r, g, b, a) -- (never SetColorTexture: every piece keeps the one texture)
+		end
+	end
 end
 
 local function SetHover(stroke)
@@ -333,6 +594,7 @@ local function BeginStroke()
 		return
 	end
 	local c = ArtPad.brushColor
+	wm.penX, wm.penY = x, y
 	wm.stroke = {
 		id = NewId(), u = true, -- not sent until the pen lifts
 		r = c.r, g = c.g, b = c.b, a = c.a,
@@ -349,6 +611,13 @@ local function EndStroke()
 	if not stroke or not real then return end
 	local W, H = CanvasSize()
 	if W <= 0 or H <= 0 then return end
+	stroke.frozen, stroke.liveFrom = nil, nil
+	if wm.brush and mapID == CurrentMap() then
+		-- the steadied pen catches up with the cursor
+		local x, y = Cursor()
+		local p = stroke.p
+		if x and (x ~= p[#p - 1] or y ~= p[#p]) then p[#p + 1], p[#p + 2] = x, y end
+	end
 	stroke.p = Simplify(stroke.p, W, H, SIMPLIFY * UnitsPerPixel())
 	if mapID == wm.mapID then
 		ReleaseStroke(stroke)
@@ -375,6 +644,15 @@ local function ExtendStroke()
 		if wm.press then wm.press.acted = true end
 		ArtPad:WorldMapHint(false)
 	else
+		if wm.brush then
+			-- the steadied pen: it is dragged along on a short string, and only moves when the
+			-- string is taut, which takes the wobble out of a hand
+			local sx, sy = (x - wm.penX) * W, (y - wm.penY) * H
+			local d, slack = math.sqrt(sx * sx + sy * sy), STRING * UnitsPerPixel()
+			if d <= slack then return end
+			x, y = x - sx / d * slack / W, y - sy / d * slack / H
+			wm.penX, wm.penY = x, y
+		end
 		local dx, dy = (x - p[n - 1]) * W, (y - p[n]) * H
 		local step = MIN_STEP * UnitsPerPixel()
 		if dx * dx + dy * dy < step * step then return end
@@ -388,7 +666,11 @@ local function ExtendStroke()
 		return
 	end
 	p[n + 1], p[n + 2] = x, y
-	DrawSegment(stroke, n - 1, W, H)
+	if wm.brush then
+		DrawLive(stroke, W, H)
+	else
+		DrawSegment(stroke, n - 1, W, H)
+	end
 	if n == 2 then ArtPad:WorldMapRefreshBar() end
 end
 
@@ -561,6 +843,7 @@ local function UpdatePropagation()
 	local container = WorldMapFrame.ScrollContainer
 	local pannable = container.CanPan and container:CanPan() or false
 	local want = Tool() == "pen" and not pannable and not wm.bar.options:IsShown() and not wm.bar.markers:IsShown()
+		and not wm.bar.sharing:IsShown()
 	if want ~= wm.propagating and pcall(input.SetPropagateMouseClicks, input, want) then
 		wm.propagating = want
 	end
@@ -608,13 +891,29 @@ end
 
 local AUDIENCE_NAMES = { GUILD = "your guild", PARTY = "your party", RAID = "your raid", INSTANCE_CHAT = "your group" }
 
+-- Who sees what is drawn on the map: a short label for the toolbar, the choice it stands for
+-- ("GUILD", "RAID" or "OFF"), and a sentence for tooltips.
+local function Sharing()
+	local channel = Audience()
+	if channel == "GUILD" then
+		return "Guild", "GUILD", "Drawings are shared with your guild."
+	elseif channel then
+		local label = channel == "RAID" and "Raid" or channel == "PARTY" and "Party" or "Group"
+		return label, "RAID", "Drawings are shared with " .. (AUDIENCE_NAMES[channel] or "your group") .. "."
+	end
+	local mode = ArtPad_Settings.Mode
+	if ArtPad_Settings.MapShare == false or ArtPad.loopback or mode == "LOCAL" then
+		return "Only Me", "OFF", "Drawings are only visible to you."
+	elseif mode == "GUILD" then
+		return "No Guild", "GUILD", "You are not in a guild. Drawings are only visible to you."
+	end
+	return "No Group", "RAID", "You are not in a group. Drawings are only visible to you."
+end
+
 -- For the round button's tooltip.
 local function SharingText()
-	local channel = Audience()
-	if channel then
-		return "Draw on the map. Drawings are shared with " .. (AUDIENCE_NAMES[channel] or "your group") .. "."
-	end
-	return "Draw on the map. Drawings are shared when you are in a guild or group."
+	local _, _, text = Sharing()
+	return "Draw on the map. " .. text
 end
 
 -- The map's next "last changed" time: now, and later than any time it has had.
@@ -966,6 +1265,30 @@ function ArtPad:SetMapSharing(on)
 	wm.asked = {}
 	wm.catch = nil
 	if on then self:WorldMapAsk() end
+	self:WorldMapRefreshBar()
+end
+
+-- Options: draw map strokes with the brush, or as the plain lines they used to be.
+function ArtPad:SetMapBrush(on)
+	ArtPad_Settings.MapBrush = on and true or false
+	if not wm.ready then return end
+	EndGesture()
+	wm.brush = wm.canBrush and ArtPad_Settings.MapBrush ~= false
+	self:WorldMapRedraw(true)
+	self:WorldMapRefreshBar()
+end
+
+-- The toolbar's sharing choice: with your guild, with your party or raid, or with nobody.
+-- Guild and party are the canvas's own sharing modes (one audience for both); "only me"
+-- stops map drawings being shared and leaves the canvas as it is.
+function ArtPad:WorldMapSetSharing(choice)
+	self:WorldMapToggleOptions(false)
+	if choice == "OFF" then
+		self:SetMapSharing(false)
+		return
+	end
+	if ArtPad_Settings.Mode ~= choice then self:SetMode(choice) end
+	self:SetMapSharing(true)
 end
 
 
@@ -1172,6 +1495,7 @@ local function OverControls()
 	return wm.entry:IsMouseOver() or (wm.bar:IsShown() and wm.bar:IsMouseOver())
 		or (wm.bar.options:IsShown() and wm.bar.options:IsMouseOver())
 		or (wm.bar.markers:IsShown() and wm.bar.markers:IsMouseOver())
+		or (wm.bar.sharing:IsShown() and wm.bar.sharing:IsMouseOver())
 end
 
 local function UpdateCursor()
@@ -1288,7 +1612,7 @@ function ArtPad:WorldMapEsc()
 	if not wm.on then return end
 	if ColorPickerFrame and ColorPickerFrame:IsShown() and self.pickerOpen then
 		ColorPickerFrame:Hide()
-	elseif wm.bar.options:IsShown() or wm.bar.markers:IsShown() then
+	elseif wm.bar.options:IsShown() or wm.bar.markers:IsShown() or wm.bar.sharing:IsShown() then
 		self:WorldMapToggleOptions(false)
 	else
 		self:WorldMapSetActive(false)
@@ -1349,6 +1673,12 @@ function ArtPad:WorldMapRefreshBar()
 	bar.clear:SetAlpha(any and 1 or 0.35)
 	wm.entry.active:SetShown(wm.on)
 	wm.entry.badge:SetShown(any and not wm.on)
+	-- the sharing button says who sees the map's drawings; its choices show the one in force
+	local label, choice = Sharing()
+	bar.share.label:SetText(label)
+	for key, b in pairs(bar.sharing.buttons) do
+		b.dot:SetShown(key == choice and (key == "OFF" or ArtPad_Settings.MapShare ~= false))
+	end
 	-- the stamp tool wears the marker it places
 	local def = self.STAMPS[wm.marker]
 	bar.tools.stamp.icon:SetTexture(def[1])
@@ -1401,7 +1731,21 @@ function ArtPad:WorldMapToggleOptions(show)
 		GameTooltip:Hide() -- the pen's tooltip sits where the options open
 	end
 	wm.bar.markers:Hide()
+	wm.bar.sharing:Hide()
 	pop:SetShown(show and true or false)
+	UpdatePropagation()
+end
+
+-- Who sees the map's drawings: the choices under the toolbar's sharing button.
+function ArtPad:WorldMapToggleSharing(show)
+	local pop = wm.bar and wm.bar.sharing
+	if not pop then return end
+	if show == nil then show = not pop:IsShown() end
+	if show then GameTooltip:Hide() end
+	wm.bar.options:Hide()
+	wm.bar.markers:Hide()
+	pop:SetShown(show and true or false)
+	self:WorldMapRefreshBar()
 	UpdatePropagation()
 end
 
@@ -1412,6 +1756,7 @@ function ArtPad:WorldMapToggleMarkers(show)
 	if show == nil then show = not pop:IsShown() end
 	if show then GameTooltip:Hide() end
 	wm.bar.options:Hide()
+	wm.bar.sharing:Hide()
 	pop:SetShown(show and true or false)
 	self:WorldMapRefreshBar()
 	UpdatePropagation()
@@ -1638,6 +1983,36 @@ local function BuildOptions(self, bar)
 	return pop
 end
 
+-- Who sees the map's drawings: guild, party or raid, or only you.
+local function BuildSharing(self, bar)
+	local ROW_W, ROW_H, PAD_ = 150, 24, 8
+	local rows = { { "GUILD", "Guild" }, { "RAID", "Party / Raid" }, { "OFF", "Only Me" } }
+	local pop = CreateFrame("Frame", "ArtPad_MapSharing", bar)
+	pop:SetFrameLevel(bar:GetFrameLevel() + 20)
+	pop:SetSize(ROW_W + 2 * PAD_, #rows * ROW_H + 2 * PAD_)
+	pop:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", 0, -6)
+	pop:EnableMouse(true)
+	Panel(pop, 0.96)
+	pop.buttons = {}
+	for i, row in ipairs(rows) do
+		local b = self:FlatButton(pop, "ArtPad_MapShare_" .. row[1], ROW_W, ROW_H, nil, function() self:WorldMapSetSharing(row[1]) end)
+		b:SetPoint("TOPLEFT", PAD_, -PAD_ - (i - 1) * ROW_H)
+		b.bg:SetColorTexture(0, 0, 0, 0)
+		b.dot = b:CreateTexture(nil, "ARTWORK")
+		b.dot:SetTexture(self.MEDIA .. "dot")
+		b.dot:SetVertexColor(1, 0.82, 0.2, 1)
+		b.dot:SetSize(8, 8)
+		b.dot:SetPoint("LEFT", 8, 0)
+		b.dot:Hide()
+		b.text = b:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+		b.text:SetPoint("LEFT", 24, 0)
+		b.text:SetText(row[2])
+		pop.buttons[row[1]] = b
+	end
+	pop:Hide()
+	return pop
+end
+
 -- The stamp tool's markers to choose from: the raid target icons and the three roles.
 local function BuildMarkers(self, bar)
 	local CELL, CGAP, CPAD, COLS = 28, 6, 10, 4
@@ -1728,9 +2103,25 @@ local function BuildBar(self, map)
 	bar.clear = Add("ArtPad_MapClear", TRASH, function() self:WorldMapClear() end)
 	MapTooltip(bar.clear, "Clear All", "Erase everything drawn on this map. This can be undone.")
 
+	-- hairline, then who sees it
+	local d2 = bar:CreateTexture(nil, "ARTWORK")
+	d2:SetColorTexture(1, 1, 1, 0.12)
+	d2:SetSize(1, BAR_H - 14)
+	d2:SetPoint("LEFT", x + 2, 0)
+	x = x + 5 + GAP
+	bar.share = self:FlatButton(bar, "ArtPad_MapShare", 64, BTN - 6, "", function() self:WorldMapToggleSharing() end)
+	bar.share:SetPoint("LEFT", x, 0)
+	bar.share.bg:SetColorTexture(1, 1, 1, 0.06)
+	MapTooltip(bar.share, "Sharing", function()
+		local _, _, text = Sharing()
+		return text
+	end, { "<Click to choose who sees your drawings>" }, function() return bar.sharing:IsShown() end)
+	x = x + 64 + GAP
+
 	bar:SetSize(x - GAP + PAD, BAR_H)
 	bar.options = BuildOptions(self, bar)
 	bar.markers = BuildMarkers(self, bar)
+	bar.sharing = BuildSharing(self, bar)
 	bar:Hide()
 	return bar
 end
@@ -1785,6 +2176,14 @@ function ArtPad:SetupWorldMapDraw()
 
 	local layer = CreateFrame("Frame", "ArtPad_MapLayer", canvas)
 	layer:SetAllPoints(canvas)
+	-- The brush needs corners that can be moved, eight-number texture coordinates, and its
+	-- texture (a file the game only finds after a full restart): without them, plain lines.
+	local probe = layer:CreateTexture()
+	wm.canBrush = probe.SetVertexOffset ~= nil and probe.ClearVertexOffsets ~= nil and probe:SetTexture(BRUSH) == true
+		and pcall(probe.SetTexCoord, probe, 0, 0, 0, 1, 1, 0, 1, 1) or false
+	probe:Hide()
+	wm.brush = wm.canBrush and ArtPad_Settings.MapBrush ~= false -- (Options can turn it off)
+	wm.maxPieces = MAX_PIECES
 	wm.baseLevel = DrawingLevel(map)
 	layer:SetFrameLevel(wm.baseLevel)
 	layer:SetScript("OnSizeChanged", function()
@@ -1811,7 +2210,7 @@ function ArtPad:SetupWorldMapDraw()
 		local sx, sy = GetCursorPosition()
 		wm.press = { button = button, x = sx, y = sy }
 		local closed = false
-		if wm.bar.options:IsShown() or wm.bar.markers:IsShown() then
+		if wm.bar.options:IsShown() or wm.bar.markers:IsShown() or wm.bar.sharing:IsShown() then
 			-- this click only closes the options; it is not the map's
 			wm.press.acted = true
 			closed = true
@@ -1893,6 +2292,15 @@ function ArtPad:SetupWorldMapDraw()
 		hooksecurefunc(map, "OnCanvasScaleChanged", function()
 			wm.cursorDirty = true
 			UpdatePropagation() -- zoomed in, a drag pans the map
+			if wm.brush then
+				-- the soft edge and the curve's fineness follow the size on screen: draw again
+				-- once the zoom has settled
+				wm.zoom = (wm.zoom or 0) + 1
+				local zoom = wm.zoom
+				C_Timer.After(0.2, function()
+					if wm.zoom == zoom and not wm.stroke then self:WorldMapRedraw(true) end
+				end)
+			end
 		end)
 	end
 	map:HookScript("OnShow", function()
@@ -1914,8 +2322,12 @@ function ArtPad:SetupWorldMapDraw()
 	events:RegisterEvent("PLAYER_REGEN_ENABLED")
 	events:RegisterEvent("PLAYER_ENTERING_WORLD")
 	events:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+	events:RegisterEvent("GROUP_ROSTER_UPDATE")
+	events:RegisterEvent("PLAYER_GUILD_UPDATE")
 	events:SetScript("OnEvent", function(_, event)
-		if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+		if event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_GUILD_UPDATE" then
+			self:WorldMapRefreshBar() -- who sees the map's drawings may have changed
+		elseif event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
 			self:WorldMapUpdateDungeon() -- into or out of a dungeon
 		elseif event == "PLAYER_REGEN_DISABLED" then
 			-- Combat is about to lock bindings: give Esc and Ctrl-Z back now, so they can

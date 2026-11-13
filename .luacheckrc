@@ -33,7 +33,7 @@ read_globals = {
 	"OpacitySliderFrame",
 	"StaticPopup_Show", "YES", "NO",
 	"Settings", "InterfaceOptions_AddCategory", "InterfaceOptionsFrame_OpenToCategory",
-	"InCombatLockdown", "IsInInstance", "GetInstanceInfo", "IsShiftKeyDown", "IsAltKeyDown", "hooksecurefunc", "WorldMapFrame", "PlaySound", "SOUNDKIT", "GetCursorPosition", "GetTime", "time", "GetServerTime",
+	"InCombatLockdown", "CreateColor", "debugprofilestop", "GetFramerate", "IsInInstance", "GetInstanceInfo", "IsShiftKeyDown", "IsAltKeyDown", "hooksecurefunc", "WorldMapFrame", "PlaySound", "SOUNDKIT", "GetCursorPosition", "GetTime", "time", "GetServerTime",
 	"SetOverrideBindingClick", "ClearOverrideBindings",
 	"UnitName", "UnitGUID", "Ambiguate", "UNKNOWNOBJECT", "GetNormalizedRealmName", "GetRealmName",
 	"IsInGuild", "GetNumGuildMembers", "GetGuildRosterInfo", "GuildControlGetRankName",

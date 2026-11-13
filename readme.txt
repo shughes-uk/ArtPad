@@ -17,9 +17,14 @@ Usage:
 
 Drawing on the world map: click the round pencil button on the world map, or hold Alt and
 drag on the map. The toolbar has a pen, an eraser and a stamp for markers (raid target icons
-and roles; click the stamp again to choose one). Each map has one drawing, shared with the
-same people as the canvas (your guild, or your party / raid) and kept between sessions.
-Options has a switch to stop sharing.
+and roles; click the stamp again to choose one), and at its end a button that says who sees
+the map's drawings and lets you choose: Guild, Party / Raid, or Only Me. Each map has one
+drawing, shared with the same people as the canvas and kept between sessions.
+
+Map strokes are drawn with a brush: curved through your points, with soft edges, round ends
+and an outline that keeps them readable on any part of a map. It appears after the game has
+been restarted once (it uses a new texture). Options has "Smooth strokes on the world map"
+to go back to plain lines.
 
 Dungeon maps: inside a dungeon or raid ArtPad shows its map over the world map (the game has
 the art but doesn't show it), with the shared drawing on top. A bar at the top picks the

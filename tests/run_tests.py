@@ -3111,6 +3111,246 @@ def test_world_map_markers():
     check(not any(".lua:" in m for m in a.chat() + b.chat() + c.chat()), "no errors")
 
 
+def test_brush_lab_opens():
+    """The hidden /ap lab window (stroke rendering experiments) builds and draws without error."""
+    w = World()
+    a = w.add("Alice")
+    settle(w)
+    a.ex("ArtPad.OnSlashCommand('lab')")
+    lab = "ArtPad.brushLab"
+    check(a.ev("ArtPad_BrushLab:IsShown()") and a.ev(f"#{lab}.panels") == 3, "three panels")
+    counts = [a.ev(f"{lab}.panels[{i}].count") for i in (1, 2, 3)]
+    check(all(c > 0 for c in counts), f"each panel drew the sample strokes ({counts})")
+    check(counts[1] > counts[0], "curves use more pieces than straight chords")
+    # drawing in one panel adds the stroke to all three
+    a.ex("ArtPad:SetColor(0.9, 0.2, 0.2, 1)")
+    a.ex("local p = ArtPad_LabPanel2; CURSOR_X, CURSOR_Y = p:GetLeft() + 50, p:GetBottom() + 200; p._scripts.OnMouseDown(p, 'LeftButton')")
+    for i in range(1, 12):
+        a.ex("local p = ArtPad_LabPanel2; CURSOR_X, CURSOR_Y = p:GetLeft() + 50 + %d, p:GetBottom() + 200 + %d; p._scripts.OnUpdate(p, 0.016)" % (i * 14, (i % 3) * 18))
+    a.ex("ArtPad_LabPanel2._scripts.OnMouseUp(ArtPad_LabPanel2, 'LeftButton')")
+    check(a.ev(f"#{lab}.strokes") == 1, "a stroke drawn in one panel is kept")
+    after = [a.ev(f"{lab}.panels[{i}].count") for i in (1, 2, 3)]
+    check(all(n > c for n, c in zip(after, counts)), f"and drawn in all three ({after})")
+    a.ex("ArtPad.OnSlashCommand('lab')")
+    check(not a.ev("ArtPad_BrushLab:IsShown()"), "/ap lab again closes it")
+    check(not any(".lua:" in m for m in a.chat()), "no errors")
+
+
+def test_brush_lab_experiments():
+    """Page two of the hidden lab: twelve experiments, each in its own panel."""
+    w = World()
+    a = w.add("Alice")
+    settle(w)
+    a.ex("ArtPad.OnSlashCommand('lab tests')")
+    T = "ArtPad.brushLabTests"
+    check(a.ev("ArtPad_LabTests:IsShown()") and a.ev(f"#{T}.panels") == 12, "twelve panels")
+    failed = [(i, a.ev(f"{T}.panels[{i}].failed")) for i in range(1, 13) if a.ev(f"{T}.panels[{i}].failed")]
+    check(not failed, f"every experiment builds ({failed})")
+    w.pump(1)   # the baking experiment takes its snapshot a moment later
+    # the heavy ones add their pieces, say how many, and clear themselves
+    a.ex(f"CLICK({T}.panels[1].buttons['+4,000 lines'])")
+    check(a.ev(f"{T}.stress.limit.shown") == 4000 and "4000 lines" in a.ev(f"{T}.panels[1].result._text"), "a stress button adds its lines and says so")
+    a.ex(f"CLICK({T}.panels[1].buttons['+6,000 pieces'])")
+    check(a.ev(f"{T}.stress.pieces.shown") == 6000, "and ribbon pieces")
+    a.ex(f"CLICK({T}.panels[2].buttons['3 x 15k'])")
+    check(a.ev(f"{T}.stress.three.shown") == 45000 and a.ev(f"{T}.stress.pieces.shown") == 0, "the buffer test starts from a clean slate")
+    w.pump(3)
+    check("frames a second" in a.ev(f"{T}.panels[2].result._text"), "and reports the frame rate once it has settled")
+    calls = [l for l in open(os.path.join(ROOT, "Debug.lua"), encoding="utf-8") if "TakeSnapshot" in l and not l.strip().startswith("--")]
+    check(not calls, "nothing makes the forbidden snapshot call any more")
+    w.pump(11)
+    check(a.ev(f"{T}.stress.limit.shown") == 0 and a.ev(f"{T}.stress.three.shown") == 0, "they clear themselves after ten seconds")
+    a.ex("WorldMapFrame:Show(); CLICK(ArtPad_LabOnMap)")
+    check(a.ev("ArtPad_LabMapSamples:IsShown()") and a.ev("ArtPad_LabOnMap.label._text") == "Samples on world map: On",
+          "the same samples can be put on the world map")
+    a.ex("CLICK(ArtPad_LabOnMap)")
+    check(not a.ev("ArtPad_LabMapSamples:IsShown()"), "and taken off again")
+    a.ex("ArtPad.OnSlashCommand('lab')")
+    check(a.ev("ArtPad_BrushLab:IsShown()"), "/ap lab still opens the three-way comparison")
+    check(not any(".lua:" in m for m in a.chat()), "no errors")
+
+
+def test_world_map_brush():
+    """Where the client can do it, map strokes are drawn with the brush: curved, welded, outlined.
+    What is saved and sent doesn't change, so a client without it draws the same strokes plainly."""
+    w = World()
+    a = w.add("Alice", login=False)
+    a.ex("BRUSH_FOUND = true")        # this client finds brush.tga (the game does after a restart)
+    a.login()
+    b = w.add("Bob")                  # this one doesn't: plain lines
+    settle(w)
+    for c in (a, b):
+        c.ex(MAP_SIG)
+    wm = "ArtPad.worldMapDraw"
+    n = lambda c, m=37: c.ev(f"MAP_N({m})")
+    a.ex("""
+        function PIECES(i)   -- pieces of stroke i: all, ink, outline, discs, plain lines
+            local own = ArtPad.worldMapDraw.linesOf[ArtPad_Settings.MapDrawings[37][i]] or {}
+            local ink, outline, discs, lines = 0, 0, 0, 0
+            for _, r in ipairs(own) do
+                if not r.piece then lines = lines + 1
+                elseif r.ink then ink = ink + 1 else outline = outline + 1 end
+                if r.piece and not r._vo then discs = discs + 1 end
+            end
+            return #own, ink, outline, discs, lines
+        end
+    """)
+    map_open(a)
+    map_open(b, tools=False)
+    w.pump(3)
+    check(a.ev(wm + ".brush") is True and b.ev(wm + ".brush") is False, "one client has the brush, the other doesn't")
+
+    # A stroke: curved pieces, an outline of the same shape underneath, round ends
+    a.ex("ArtPad:SetColor(0.9, 0.2, 0.15, 1)")
+    map_drag(a, ZIG)
+    total, ink, outline, discs, lines = a.ev("PIECES(1)")
+    check(lines == 0 and ink == outline and ink > 3, f"drawn as ink over an outline of the same shape ({ink} + {outline} pieces)")
+    check(discs == 4, f"with a round end at each end of both ({discs})")
+    check(a.ev(f"{wm}.linesOf[ArtPad_Settings.MapDrawings[37][1]][1]._texture"), "every piece uses the one brush texture")
+    check(a.ev(wm + ".count") == total, "and every piece is counted")
+    check(a.ev("ArtPad_Settings.MapDrawings[37][1].frozen") is None and a.ev("ArtPad_Settings.MapDrawings[37][1].liveFrom") is None,
+          "nothing about how it was drawn is left on the stroke")
+    stored = a.ev("#ArtPad_Settings.MapDrawings[37][1].p") // 2
+    check(stored <= len(ZIG) + 1, f"what is kept is still just its few points ({stored})")
+
+    # The other client gets the same stroke and draws it its own way
+    w.pump(3)
+    check(n(b) == 1 and b.ev(wm + ".count") == stored - 1, f"a client without the brush draws the same points as plain lines ({b.ev(wm + '.count')})")
+    map_same(w, 37, "brush and plain")
+
+    # See-through ink: no round ends or joins (they would show through)
+    a.ex("ArtPad:SetColor(0.2, 0.5, 1, 0.5)")
+    map_drag(a, zig(0.3))
+    total2, ink2, outline2, discs2, _ = a.ev("PIECES(2)")
+    check(discs2 == 0 and ink2 == outline2 and ink2 > 3, f"see-through ink has no discs ({discs2})")
+
+    # The eraser lights up the ink (by tint, never by swapping the texture) and removes the stroke
+    a.ex("CLICK(ArtPad_MapTool_eraser)")
+    a.ex("MAP_CURSOR = { 0.3, 0.25 }; CURSOR_X, CURSOR_Y = 300, 167; ArtPad_MapInput._scripts.OnUpdate(ArtPad_MapInput, 0.016)")
+    lit = a.ev("""(function()
+        local own = ArtPad.worldMapDraw.linesOf[ArtPad_Settings.MapDrawings[37][1]]
+        local inkLit, outlineSame = true, true
+        for _, r in ipairs(own) do
+            if r.ink then inkLit = inkLit and r.color[1] == 1 and r.color[2] == 1
+            else outlineSame = outlineSame and r.color[1] < 0.5 end
+        end
+        return inkLit and outlineSame end)()""")
+    check(lit, "the eraser lights the ink and leaves the outline")
+    before = a.ev(wm + ".count")
+    map_drag(a, [(0.3, 0.25), (0.305, 0.25), (0.31, 0.25)])
+    w.pump(3)
+    check(n(a) == 1 and n(b) == 1 and a.ev(wm + ".count") == before - total, "erasing takes all its pieces off, for both")
+    a.ex("ArtPad:WorldMapUndo()")
+    w.pump(3)
+    check(n(a) == 2 and a.ev(wm + ".count") == before, "and undo draws them again")
+    a.ex("CLICK(ArtPad_MapTool_pen)")
+
+    # A long stroke under the pen only redraws its tail
+    a.ex("ArtPad:SetColor(0.1, 0.1, 0.1, 1)")
+    a.ex("MAP_CURSOR = { 0.1, 0.8 }; CURSOR_X, CURSOR_Y = 100, 534; ArtPad_MapInput._scripts.OnMouseDown(ArtPad_MapInput, 'LeftButton')")
+    froze = False
+    import math as _m
+    for i in range(1, 160):
+        x, y = 0.1 + i * 0.005, 0.8 + 0.03 * _m.sin(i / 6)
+        a.ex("MAP_CURSOR = { %f, %f }; CURSOR_X, CURSOR_Y = %f, %f; ArtPad_MapInput._scripts.OnUpdate(ArtPad_MapInput, 0.016)" % (x, y, x * 1002, y * 668))
+        froze = froze or bool(a.ev(wm + ".stroke and " + wm + ".stroke.frozen"))
+    check(froze, "the part further back is left as drawn while the pen moves on")
+    live = a.ev(f"#{wm}.linesOf[{wm}.stroke]")
+    a.ex("ArtPad_MapInput._scripts.OnMouseUp(ArtPad_MapInput, 'LeftButton')")
+    total3, ink3, outline3, _, _ = a.ev("PIECES(3)")
+    check(ink3 == outline3 and total3 > 0, f"when it ends it is drawn whole ({live} pieces while drawing, {total3} finished)")
+    endx = a.ev("ArtPad_Settings.MapDrawings[37][3].p[#ArtPad_Settings.MapDrawings[37][3].p - 1]")
+    check(abs(endx - (0.1 + 159 * 0.005)) < 0.001, f"and the steadied pen has caught up with the cursor ({endx:.4f})")
+    w.pump(3)
+    check(n(b) == 3, "the finished stroke is shared as ever")
+    map_same(w, 37, "after a long stroke")
+
+    # Zooming draws everything again at the new size; markers are unaffected
+    count = a.ev(wm + ".count")
+    a.ex("WorldMapFrame:OnCanvasScaleChanged()")
+    w.pump(1)
+    check(a.ev(wm + ".count") == count, "a zoom redraws the same strokes")
+    a.ex("CLICK(ArtPad_MapTool_stamp)")
+    map_drag(a, [(0.8, 0.2)])
+    check(n(a) == 4 and a.ev(wm + ".count") == count + 1, "markers still work alongside")
+
+    # Options can turn the brush off: the same strokes as plain lines, and back
+    with_brush = a.ev(wm + ".count")
+    a.ex("ArtPad:SetMapBrush(false)")
+    check(a.ev(wm + ".brush") is False and a.ev("PIECES(1)") [4] > 0 and a.ev(wm + ".count") < with_brush,
+          "with the brush off, strokes are plain lines again")
+    a.ex("ArtPad:SetMapBrush(true)")
+    check(a.ev(wm + ".brush") is True and a.ev(wm + ".count") == with_brush and a.ev("PIECES(1)")[4] == 0, "and back on, the brush again")
+
+    # A full map refuses more ink instead of failing
+    a.ex(f"{wm}.maxPieces = {wm}.count + 5; CLICK(ArtPad_MapTool_pen)")
+    map_drag(a, zig(0.5))
+    check(a.ev(wm + ".count") <= a.ev(wm + ".maxPieces"), "a full map stops drawing at its limit")
+    check(not any(".lua:" in m for m in a.chat() + b.chat()), "no errors")
+
+
+def test_world_map_sharing_button():
+    """The map toolbar says who sees the map's drawings, and switches between guild, party and nobody."""
+    w = World()
+    a, b = w.add("Alice"), w.add("Bob")          # guild mates
+    p = w.add("Pat", guild=False)                # Alice's party, not her guild
+    p.ex('ArtPad:SetMode("RAID")')
+    w.group("party", "Alice", "Pat")
+    settle(w)
+    for c in (a, b, p):
+        c.ex(MAP_SIG)
+    n = lambda c, m=37: c.ev(f"MAP_N({m})")
+    label = lambda c: c.ev("ArtPad_MapShare.label._text")
+    dot = lambda c, k: bool(c.ev(f"ArtPad_MapShare_{k}.dot:IsShown()"))
+    map_open(a)
+    w.pump(3)
+    check(label(a) == "Guild" and not a.ev("ArtPad_MapSharing:IsShown()"), f"the toolbar says who sees the map's drawings ({label(a)})")
+    map_drag(a, ZIG)
+    w.pump(3)
+    check(n(b) == 1 and n(p) == 0, "guild: the guild sees it, the party doesn't")
+
+    # The choices open under the button; picking one switches and closes them
+    a.ex("CLICK(ArtPad_MapShare)")
+    check(a.ev("ArtPad_MapSharing:IsShown()") and dot(a, "GUILD") and not dot(a, "RAID") and not dot(a, "OFF"), "the choices show the one in force")
+    check(not a.ev("ArtPad.worldMapDraw.propagating"), "and a click on the map only closes them")
+    a.ex("CLICK(ArtPad_MapShare_RAID)")
+    check(not a.ev("ArtPad_MapSharing:IsShown()") and a.ev("ArtPad_Settings.Mode") == "RAID" and label(a) == "Party",
+          f"party / raid switches the audience ({label(a)})")
+    w.pump(4)
+    map_drag(a, zig(0.2))
+    w.pump(3)
+    check(n(p) == 1, f"the party now gets what is drawn ({n(p)})")
+    check(n(b) == 1, "and the guild no longer does")
+
+    # Only me: nothing is sent, and the canvas keeps its own sharing
+    a.ex("CLICK(ArtPad_MapShare); CLICK(ArtPad_MapShare_OFF)")
+    check(label(a) == "Only Me" and a.ev("ArtPad_Settings.MapShare") is False and a.ev("ArtPad_Settings.Mode") == "RAID",
+          "only me stops map sharing and leaves the canvas's audience alone")
+    before = n(p)
+    map_drag(a, zig(0.4))
+    w.pump(3)
+    check(n(p) == before, "nothing drawn is sent")
+    a.ex("CLICK(ArtPad_MapShare)")
+    check(dot(a, "OFF") and not dot(a, "RAID"), "the choices show only me")
+    a.ex("ArtPad:WorldMapEsc()")
+    check(not a.ev("ArtPad_MapSharing:IsShown()") and a.ev("ArtPad.worldMapDraw.on"), "Esc closes the choices before the tools")
+
+    # Back to guild: sharing comes back on with it
+    a.ex("CLICK(ArtPad_MapShare); CLICK(ArtPad_MapShare_GUILD)")
+    check(label(a) == "Guild" and a.ev("ArtPad_Settings.MapShare") is True and a.ev("ArtPad_Settings.Mode") == "GUILD", "guild turns sharing back on")
+    # The button follows changes made elsewhere, and says when there is nobody to share with
+    a.ex("ArtPad.OnSlashCommand('raid')")
+    check(label(a) == "Party", "it follows the canvas's own sharing switch")
+    leave_group(w, a)
+    a.g.FIRE_EVENT("GROUP_ROSTER_UPDATE")
+    check(label(a) == "No Group", f"and says when there is nobody to share with ({label(a)})")
+    a.ex("ArtPad_MapShare._scripts.OnEnter(ArtPad_MapShare)")
+    check("not in a group" in a.ev("TOOLTIP_TEXT()"), "its tooltip explains")
+    a.ex("ArtPad.OnSlashCommand('local')")
+    check(label(a) == "Only Me", "local mode: map drawings stay with you")
+    check(not any(".lua:" in m for m in a.chat()), "no errors")
+
+
 def test_hide_button():
     w = World()
     a = w.add("Alice")

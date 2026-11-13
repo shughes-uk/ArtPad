@@ -60,7 +60,13 @@ function methods:Hide()
 		if self._scripts.OnHide then self._scripts.OnHide(self) end
 	end
 end
-function methods:SetTexture(t) self._texture = t end
+-- (a client only finds brush.tga after a full restart: tests that want the brush set BRUSH_FOUND)
+function methods:SetTexture(t)
+	self._texture = t
+	if BRUSH_FOUND and type(t) == "string" and t:find("brush$") then return true end
+end
+function methods:SetVertexOffset(i, x, y) self._vo = self._vo or {}; self._vo[i] = { x, y } end
+function methods:ClearVertexOffsets() self._vo = nil end
 function methods:SetShown(v) if v then self:Show() else self:Hide() end end
 function methods:IsShown() return self._shown end
 function methods:IsVisible()
@@ -197,6 +203,7 @@ function InterfaceOptionsFrame_OpenToCategory() end
 NOW = 0
 function GetTime() return NOW end
 function time() return 1700000000 + math.floor(NOW) end
+function CreateColor(r, g, b, a) return { r = r, g = g, b = b, a = a } end
 function debugprofilestop() return NOW * 1000 end
 function GetFramerate() return 60 end
 

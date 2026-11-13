@@ -45,6 +45,7 @@ local defaults = {
 	MapDim = 0.4, -- darken the map backdrop so drawings stand out
 	MapDrawings = {}, -- world map drawings, mapID -> strokes (WorldMapDraw.lua)
 	MapShare = true, -- share them with the guild or group
+	MapBrush = true, -- draw them with the brush (WorldMapDraw.lua) where the client can
 	BrushSize = 3,
 	Color = { r = 1, g = 1, b = 1, a = 1 },
 	RecentColors = {},
@@ -170,7 +171,7 @@ function ArtPad:OnInitialize()
 		-- is checked for shape where it is read.
 		local old = ArtPad_Settings
 		ArtPad_Settings = {}
-		for _, key in ipairs({ "PlaceCanvases", "MapDrawings", "MapShare", "FullNames", "MapHintSeen" }) do
+		for _, key in ipairs({ "PlaceCanvases", "MapDrawings", "MapShare", "MapBrush", "FullNames", "MapHintSeen" }) do
 			ArtPad_Settings[key] = old[key]
 		end
 	end
@@ -309,6 +310,7 @@ function ArtPad:SetMode(mode)
 	ArtPad_Settings.Mode = mode
 	self:Notify(MODE_MESSAGES[mode], "success")
 	self:RequestRefresh()
+	if self.WorldMapRefreshBar then self:WorldMapRefreshBar() end -- its sharing button follows
 	-- A different audience means a different shared canvas.
 	self:ResetCanvas()
 	if mode == "LOCAL" then
@@ -424,6 +426,7 @@ ArtPad.slashCommands = {
 	stats = function(self) self:PrintStats() end,
 	versions = function(self) self:QueryVersions() end,
 	node = function(self) self:PrintPlaces() end, -- hidden: distances to places
+	lab = function(self, arg) self:BrushLab(arg) end, -- hidden: stroke rendering experiments (Debug.lua)
 	dungeon = function(self, arg) self:DungeonCommand(arg) end, -- which dungeon map; WorldMapDraw.lua
 	bench = function(self, arg) self:BenchCommand(arg) end, -- hidden: Debug.lua
 	size = function(self, arg)
