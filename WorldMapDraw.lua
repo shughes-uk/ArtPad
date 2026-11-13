@@ -8,7 +8,7 @@
 	  clicks like Blizzard's buttons, and turns itself off when the map closes. A small dot on
 	  it means the map you're looking at has a drawing. Nothing else is on the map until then.
 
-	  While on, a slim toolbar unfolds from the button: pen, eraser | undo, clear.
+	  While on, a slim toolbar unfolds from the button: pen, eraser, marker | undo, clear.
 	    - Drag draws. A plain click still works the map (zones and pins), and so does
 	      right-click (up a level): drawing never traps you. Hovering still works the map too.
 	    - The pen icon wears the current colour. Click the active pen again for colours and
@@ -21,7 +21,8 @@
 
 	Each map (zone, continent...) has its own drawing, stored in 0-1 map coordinates and kept
 	in ArtPad_Settings.MapDrawings[mapID]: a list of strokes { id, r, g, b, a, w, p = points }
-	plus when it last changed (.t) and what is waiting to be sent (see "Sharing").
+	and markers { id, k = which, x, y, s = size }, plus when it last changed (.t) and what is
+	waiting to be sent (see "Sharing"). Most of the code calls either kind a stroke.
 
 	How it attaches to Blizzard's map (Blizzard_MapCanvas):
 	  WorldMapFrame.ScrollContainer.Child is the layer that scrolls and zooms with the map.
@@ -74,7 +75,9 @@ local wm = {
 	linesOf = setmetatable({}, { __mode = "k" }), -- stroke -> its line regions
 	history = {}, -- mapID -> stack of things done here: { add = strokes } or { remove = { {stroke, index} } }
 	on = false, -- the toolbar is out
-	tool = "pen", -- "pen" or "eraser"
+	tool = "pen", -- "pen", "eraser" or "stamp"
+	marker = "r8", -- which marker the stamp tool places (a key of ArtPad.STAMPS)
+	markerPool = {}, -- free marker textures
 	propagating = false, -- left presses also reach the map (see the top of the file)
 }
 ArtPad.worldMapDraw = wm
@@ -175,7 +178,28 @@ local function DrawSegment(stroke, i, W, H)
 	return true
 end
 
+-- A marker is one texture; it counts against the same budget as the lines.
+local function DrawMarker(item, W, H)
+	local def = ArtPad.STAMPS[item.k]
+	if not def or wm.count >= Budget() then return end
+	local tex = table.remove(wm.markerPool) or wm.layer:CreateTexture(nil, "OVERLAY")
+	tex:SetTexture(def[1])
+	tex:SetTexCoord(def[2], def[3], def[4], def[5])
+	tex:SetVertexColor(1, 1, 1, 1)
+	local size = item.s * W
+	tex:SetSize(size, size)
+	tex:ClearAllPoints()
+	tex:SetPoint("CENTER", wm.layer, "TOPLEFT", item.x * W, -item.y * H)
+	tex:Show()
+	wm.count = wm.count + 1
+	wm.linesOf[item] = { tex }
+end
+
 local function DrawStroke(stroke, W, H)
+	if stroke.k then
+		DrawMarker(stroke, W, H)
+		return
+	end
 	for i = 1, #stroke.p - 3, 2 do
 		if not DrawSegment(stroke, i, W, H) then return end
 	end
@@ -185,9 +209,10 @@ end
 local function ReleaseStroke(stroke)
 	local own = wm.linesOf[stroke]
 	if not own then return end
+	local pool = stroke.k and wm.markerPool or wm.pool
 	for i = #own, 1, -1 do
 		own[i]:Hide()
-		table.insert(wm.pool, own[i])
+		table.insert(pool, own[i])
 	end
 	wm.count = wm.count - #own
 	wm.linesOf[stroke] = nil
@@ -216,6 +241,11 @@ end
 -- The eraser lights up the stroke it would remove, in whichever of white or dark red stands
 -- out from that stroke's own colour.
 local function Tint(stroke, lit)
+	if stroke.k then
+		-- a marker goes red
+		for _, tex in ipairs(wm.linesOf[stroke] or {}) do tex:SetVertexColor(1, lit and 0.3 or 1, lit and 0.3 or 1, 1) end
+		return
+	end
 	local r, g, b, a = stroke.r, stroke.g, stroke.b, stroke.a
 	if lit then
 		if 0.299 * r + 0.587 * g + 0.114 * b > 0.6 then
@@ -362,6 +392,34 @@ local function ExtendStroke()
 	if n == 2 then ArtPad:WorldMapRefreshBar() end
 end
 
+-- How big a marker is on screen: it follows the brush size, as on the canvas.
+local function MarkerPixels()
+	return math.max(24, ArtPad_Settings.BrushSize * 6)
+end
+
+-- The stamp tool: a marker where the cursor is.
+local function PlaceMarker()
+	local x, y = Cursor()
+	local mapID = CurrentMap()
+	local W, H = CanvasSize()
+	if not x or not mapID or W <= 0 then return end
+	if wm.count >= Budget() then
+		WarnFull()
+		return
+	end
+	local item = {
+		id = NewId(), u = true, k = wm.marker, x = Round(x), y = Round(y),
+		s = math.floor(MarkerPixels() * UnitsPerPixel() / W * 100000 + 0.5) / 100000, -- a fraction of the map's width
+	}
+	table.insert(Strokes(mapID, true), item)
+	Record(mapID, { add = { item } })
+	if mapID == wm.mapID then DrawMarker(item, W, H) end
+	PublishAdd(mapID, { item })
+	ArtPad_Settings.MapHintSeen = true
+	ArtPad:WorldMapHint(false)
+	ArtPad:WorldMapRefreshBar()
+end
+
 -- Drop whatever the mouse was in the middle of (the map changed, undo, the catcher hid).
 local function EndGesture()
 	local press = wm.press
@@ -378,11 +436,18 @@ local function StrokeAt(x, y)
 	local W, H = CanvasSize()
 	local radius = ERASE_RADIUS * UnitsPerPixel()
 	for s = #strokes, 1, -1 do
-		local p = strokes[s].p
-		local reach = radius + strokes[s].w * W / 2
-		for i = 1, #p - 3, 2 do
-			if ArtPad.PointSegDist(x * W, y * H, p[i] * W, p[i + 1] * H, p[i + 2] * W, p[i + 3] * H) <= reach then
-				return s, strokes[s]
+		local item = strokes[s]
+		if item.k then
+			local dx, dy = (x - item.x) * W, (y - item.y) * H
+			local reach = radius + item.s * W / 2
+			if dx * dx + dy * dy <= reach * reach then return s, item end
+		else
+			local p = item.p
+			local reach = radius + item.w * W / 2
+			for i = 1, #p - 3, 2 do
+				if ArtPad.PointSegDist(x * W, y * H, p[i] * W, p[i + 1] * H, p[i + 2] * W, p[i + 3] * H) <= reach then
+					return s, item
+				end
 			end
 		end
 	end
@@ -495,7 +560,7 @@ local function UpdatePropagation()
 	if not input.SetPropagateMouseClicks or InCombatLockdown() then return end
 	local container = WorldMapFrame.ScrollContainer
 	local pannable = container.CanPan and container:CanPan() or false
-	local want = Tool() == "pen" and not pannable and not wm.bar.options:IsShown()
+	local want = Tool() == "pen" and not pannable and not wm.bar.options:IsShown() and not wm.bar.markers:IsShown()
 	if want ~= wm.propagating and pcall(input.SetPropagateMouseClicks, input, want) then
 		wm.propagating = want
 	end
@@ -572,12 +637,20 @@ end
 local function Pack(strokes)
 	local out = {}
 	for _, s in ipairs(strokes) do
-		local p = {}
-		for i, v in ipairs(s.p) do p[i] = math.floor(v * 10000 + 0.5) end
-		out[#out + 1] = {
-			s.id, math.floor(s.r * 255 + 0.5), math.floor(s.g * 255 + 0.5), math.floor(s.b * 255 + 0.5),
-			math.floor(s.a * 255 + 0.5), math.floor(s.w * 100000 + 0.5), p,
-		}
+		if s.k then
+			-- a marker: { id, "M", which, x, y, size }. Versions before markers skip it.
+			out[#out + 1] = {
+				s.id, "M", s.k, math.floor(s.x * 10000 + 0.5), math.floor(s.y * 10000 + 0.5),
+				math.floor(s.s * 100000 + 0.5),
+			}
+		else
+			local p = {}
+			for i, v in ipairs(s.p) do p[i] = math.floor(v * 10000 + 0.5) end
+			out[#out + 1] = {
+				s.id, math.floor(s.r * 255 + 0.5), math.floor(s.g * 255 + 0.5), math.floor(s.b * 255 + 0.5),
+				math.floor(s.a * 255 + 0.5), math.floor(s.w * 100000 + 0.5), p,
+			}
+		end
 	end
 	return ArtPad:EncodeData(out)
 end
@@ -591,7 +664,17 @@ end
 -- One stroke from someone else: checked, or nil.
 local function Sanitize(rec)
 	local id, p = rec[1], rec[7]
-	if type(id) ~= "string" or #id > 24 or not id:match("^%w+%.%d+$") or type(p) ~= "table" then return nil end
+	if type(id) ~= "string" or #id > 24 or not id:match("^%w+%.%d+$") then return nil end
+	if rec[2] == "M" then
+		local k, x, y, size = rec[3], rec[4], rec[5], tonumber(rec[6]) or 0
+		if type(k) ~= "string" or not ArtPad.STAMPS[k] or type(x) ~= "number" or type(y) ~= "number" then return nil end
+		if x ~= x or y ~= y or x < 0 or x > 10000 or y < 0 or y > 10000 or size ~= size then return nil end
+		return {
+			id = id, k = k, x = math.floor(x + 0.5) / 10000, y = math.floor(y + 0.5) / 10000,
+			s = math.max(0.004, math.min(0.2, size / 100000)),
+		}
+	end
+	if type(p) ~= "table" then return nil end
 	local n = #p
 	if n < 4 or n % 2 ~= 0 or n > MAX_POINTS * 2 then return nil end
 	local pts = {}
@@ -1079,6 +1162,7 @@ local function HideCursor()
 	wm.dot:Hide()
 	wm.dotRing:Hide()
 	wm.ring:Hide()
+	wm.ghost:Hide()
 	SetHover(nil)
 	wm.cursorX = nil
 end
@@ -1087,6 +1171,7 @@ end
 local function OverControls()
 	return wm.entry:IsMouseOver() or (wm.bar:IsShown() and wm.bar:IsMouseOver())
 		or (wm.bar.options:IsShown() and wm.bar.options:IsMouseOver())
+		or (wm.bar.markers:IsShown() and wm.bar.markers:IsMouseOver())
 end
 
 local function UpdateCursor()
@@ -1107,7 +1192,18 @@ local function UpdateCursor()
 		region:SetPoint("CENTER", wm.input, "TOPLEFT", x * W, -y * H)
 		region:Show()
 	end
-	if tool == "eraser" then
+	if tool == "stamp" then
+		-- the marker about to be placed, faint, at the size it will have
+		wm.dot:Hide()
+		wm.dotRing:Hide()
+		wm.ring:Hide()
+		SetHover(nil)
+		local def = ArtPad.STAMPS[wm.marker]
+		wm.ghost:SetTexture(def[1])
+		wm.ghost:SetTexCoord(def[2], def[3], def[4], def[5])
+		Place(wm.ghost, MarkerPixels() * k)
+	elseif tool == "eraser" then
+		wm.ghost:Hide()
 		wm.dot:Hide()
 		wm.dotRing:Hide()
 		Place(wm.ring, 2 * ERASE_RADIUS * k)
@@ -1117,6 +1213,7 @@ local function UpdateCursor()
 		end
 	else
 		wm.ring:Hide()
+		wm.ghost:Hide()
 		SetHover(nil)
 		-- the blob of ink the pen will leave: same size, same colour, same opacity
 		local c = ArtPad.brushColor
@@ -1191,17 +1288,21 @@ function ArtPad:WorldMapEsc()
 	if not wm.on then return end
 	if ColorPickerFrame and ColorPickerFrame:IsShown() and self.pickerOpen then
 		ColorPickerFrame:Hide()
-	elseif wm.bar.options:IsShown() then
+	elseif wm.bar.options:IsShown() or wm.bar.markers:IsShown() then
 		self:WorldMapToggleOptions(false)
 	else
 		self:WorldMapSetActive(false)
 	end
 end
 
--- Pick a tool. Picking the pen while it's active opens its options (colour and size).
+-- Pick a tool. Picking the pen while it's active opens its options (colour and size);
+-- picking the stamp while it's active opens the markers to choose from.
 function ArtPad:WorldMapSetTool(tool)
 	if tool == "pen" and wm.tool == "pen" then
 		self:WorldMapToggleOptions()
+		return
+	elseif tool == "stamp" and wm.tool == "stamp" then
+		self:WorldMapToggleMarkers()
 		return
 	end
 	EndGesture()
@@ -1248,6 +1349,17 @@ function ArtPad:WorldMapRefreshBar()
 	bar.clear:SetAlpha(any and 1 or 0.35)
 	wm.entry.active:SetShown(wm.on)
 	wm.entry.badge:SetShown(any and not wm.on)
+	-- the stamp tool wears the marker it places
+	local def = self.STAMPS[wm.marker]
+	bar.tools.stamp.icon:SetTexture(def[1])
+	bar.tools.stamp.icon:SetTexCoord(def[2], def[3], def[4], def[5])
+	for key, b in pairs(bar.markers.buttons) do
+		if key == wm.marker then
+			self.Fill(b.bg, self.C.accent, 0.35)
+		else
+			self.Fill(b.bg, { 0.137, 0.157, 0.188 })
+		end
+	end
 	if bar.options:IsShown() then self:WorldMapRefreshOptions() end
 end
 
@@ -1278,6 +1390,8 @@ function ArtPad:WorldMapRefreshOptions()
 	pop:SetHeight(anyRecent and pop.tall or pop.short)
 end
 
+-- The pen's options. Closing them (show = false) closes the marker picker too: callers use
+-- that to put away whatever is open.
 function ArtPad:WorldMapToggleOptions(show)
 	local pop = wm.bar and wm.bar.options
 	if not pop then return end
@@ -1286,8 +1400,26 @@ function ArtPad:WorldMapToggleOptions(show)
 		self:WorldMapRefreshOptions()
 		GameTooltip:Hide() -- the pen's tooltip sits where the options open
 	end
+	wm.bar.markers:Hide()
 	pop:SetShown(show and true or false)
 	UpdatePropagation()
+end
+
+-- The stamp tool's choice of markers.
+function ArtPad:WorldMapToggleMarkers(show)
+	local pop = wm.bar and wm.bar.markers
+	if not pop then return end
+	if show == nil then show = not pop:IsShown() end
+	if show then GameTooltip:Hide() end
+	wm.bar.options:Hide()
+	pop:SetShown(show and true or false)
+	self:WorldMapRefreshBar()
+	UpdatePropagation()
+end
+
+function ArtPad:WorldMapSetMarker(key)
+	if self.STAMPS[key] then wm.marker = key end
+	self:WorldMapToggleMarkers(false)
 end
 
 -- Brush size from the options or Shift + wheel. The wheel stops at MAX_SIZE but never
@@ -1506,6 +1638,34 @@ local function BuildOptions(self, bar)
 	return pop
 end
 
+-- The stamp tool's markers to choose from: the raid target icons and the three roles.
+local function BuildMarkers(self, bar)
+	local CELL, CGAP, CPAD, COLS = 28, 6, 10, 4
+	local keys = self.STAMP_ORDER
+	local rows = math.ceil(#keys / COLS)
+	local pop = CreateFrame("Frame", "ArtPad_MapMarkers", bar)
+	pop:SetFrameLevel(bar:GetFrameLevel() + 20)
+	pop:SetSize(CPAD * 2 + CELL * COLS + CGAP * (COLS - 1), CPAD * 2 + CELL * rows + CGAP * (rows - 1))
+	pop:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", 0, -6)
+	pop:EnableMouse(true)
+	Panel(pop, 0.96)
+	pop.buttons = {}
+	for i, key in ipairs(keys) do
+		local def = self.STAMPS[key]
+		local b = self:FlatButton(pop, "ArtPad_MapMarker_" .. key, CELL, CELL, nil, function() self:WorldMapSetMarker(key) end)
+		b:SetPoint("TOPLEFT", CPAD + ((i - 1) % COLS) * (CELL + CGAP), -CPAD - math.floor((i - 1) / COLS) * (CELL + CGAP))
+		local icon = b:CreateTexture(nil, "ARTWORK")
+		icon:SetTexture(def[1])
+		icon:SetTexCoord(def[2], def[3], def[4], def[5])
+		icon:SetSize(20, 20)
+		icon:SetPoint("CENTER")
+		MapTooltip(b, def[6])
+		pop.buttons[key] = b
+	end
+	pop:Hide()
+	return pop
+end
+
 -- The toolbar: one slim strip that unfolds from the round button.
 --   pen  eraser  |  undo  clear
 local function BuildBar(self, map)
@@ -1544,7 +1704,17 @@ local function BuildBar(self, map)
 		{ "<Click again to change colour and size>", "<Shift Mouse Wheel to change size>" },
 		function() return bar.options:IsShown() end)
 	bar.tools.eraser = Add("ArtPad_MapTool_eraser", self.GLYPHS.eraser, function() self:WorldMapSetTool("eraser") end)
-	MapTooltip(bar.tools.eraser, "Eraser", "Click and drag over a line to erase it.")
+	MapTooltip(bar.tools.eraser, "Eraser", "Click and drag over a line or marker to erase it.")
+	local stamp = MiniButton(self, bar, "ArtPad_MapTool_stamp", function() self:WorldMapSetTool("stamp") end)
+	stamp:SetPoint("LEFT", x, 0)
+	stamp.icon = stamp:CreateTexture(nil, "ARTWORK")
+	stamp.icon:SetSize(18, 18)
+	stamp.icon:SetPoint("CENTER")
+	x = x + BTN + GAP
+	bar.tools.stamp = stamp
+	MapTooltip(stamp, "Marker", "Click on the map to place a marker.",
+		{ "<Click again to choose a marker>", "<Shift Mouse Wheel to change size>" },
+		function() return bar.markers:IsShown() end)
 
 	-- hairline between the tools and undo/clear
 	local d = bar:CreateTexture(nil, "ARTWORK")
@@ -1560,6 +1730,7 @@ local function BuildBar(self, map)
 
 	bar:SetSize(x - GAP + PAD, BAR_H)
 	bar.options = BuildOptions(self, bar)
+	bar.markers = BuildMarkers(self, bar)
 	bar:Hide()
 	return bar
 end
@@ -1639,15 +1810,20 @@ function ArtPad:SetupWorldMapDraw()
 		if button ~= "LeftButton" and button ~= "RightButton" then return end
 		local sx, sy = GetCursorPosition()
 		wm.press = { button = button, x = sx, y = sy }
-		if wm.bar.options:IsShown() then
+		local closed = false
+		if wm.bar.options:IsShown() or wm.bar.markers:IsShown() then
 			-- this click only closes the options; it is not the map's
 			wm.press.acted = true
+			closed = true
 			self:WorldMapToggleOptions(false)
 		end
 		if button ~= "LeftButton" then return end
 		if Tool() == "eraser" then
 			wm.mode = "erase"
 			EraseAtCursor()
+		elseif Tool() == "stamp" then
+			wm.press.acted = true -- a click with the stamp is ours, not the map's
+			if not closed then PlaceMarker() end
 		else
 			wm.mode = "draw"
 			BeginStroke()
@@ -1694,6 +1870,9 @@ function ArtPad:SetupWorldMapDraw()
 	wm.ring:SetTexture(self.MEDIA .. "ring")
 	wm.ring:SetVertexColor(1, 1, 1, 0.85)
 	wm.ring:Hide()
+	wm.ghost = input:CreateTexture(nil, "OVERLAY", nil, 2)
+	wm.ghost:SetVertexColor(1, 1, 1, 0.6)
+	wm.ghost:Hide()
 
 	wm.entry = BuildEntry(self, map)
 	PlaceEntry(map)

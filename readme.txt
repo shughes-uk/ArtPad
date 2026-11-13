@@ -16,8 +16,10 @@ Usage:
   /ap resetui    put the window back to its default size and spot
 
 Drawing on the world map: click the round pencil button on the world map, or hold Alt and
-drag on the map. Each map has one drawing, shared with the same people as the canvas (your
-guild, or your party / raid) and kept between sessions. Options has a switch to stop sharing.
+drag on the map. The toolbar has a pen, an eraser and a stamp for markers (raid target icons
+and roles; click the stamp again to choose one). Each map has one drawing, shared with the
+same people as the canvas (your guild, or your party / raid) and kept between sessions.
+Options has a switch to stop sharing.
 
 Dungeon maps: inside a dungeon or raid ArtPad shows its map over the world map (the game has
 the art but doesn't show it), with the shared drawing on top. A bar at the top picks the

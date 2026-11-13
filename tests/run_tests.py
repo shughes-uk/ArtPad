@@ -2652,7 +2652,7 @@ function MAP_SIG(id)
 	local list = ArtPad_Settings.MapDrawings[id]
 	if not list then return "" end
 	local out = {}
-	for _, s in ipairs(list) do out[#out + 1] = s.id .. "/" .. (#s.p / 2) end
+	for _, s in ipairs(list) do out[#out + 1] = s.id .. "/" .. (s.k or #s.p / 2) end
 	table.sort(out)
 	return table.concat(out, " ")
 end
@@ -3018,6 +3018,97 @@ def test_dungeon_maps():
     p.ex("ArtPad.OnSlashCommand('dungeon off')")
     check(not p.ev("ArtPad_DungeonArt:IsShown()"), "/ap dungeon off puts it away")
     check(not any(".lua:" in m for m in p.chat()), "no errors")
+
+
+def test_world_map_markers():
+    w = World()
+    a, b = w.add("Alice"), w.add("Bob")
+    settle(w)
+    for c in (a, b):
+        c.ex(MAP_SIG)
+    n = lambda c, m=37: c.ev(f"MAP_N({m})")
+    wm = "ArtPad.worldMapDraw"
+    item = lambda c, i, f: c.ev(f"ArtPad_Settings.MapDrawings[37][{i}].{f}")
+    map_open(a)
+    map_open(b, tools=False)
+    w.pump(3)
+
+    # The stamp tool: a click places a marker, and the click is not the map's
+    a.ex("CLICK(ArtPad_MapTool_stamp)")
+    check(a.ev(wm + ".tool") == "stamp" and a.ev("ArtPad_MapTool_stamp.mark:IsShown()") and not a.ev("ArtPad_MapTool_pen.mark:IsShown()"),
+          "the toolbar has a stamp tool")
+    check(not a.ev(wm + ".propagating"), "with the stamp out, clicks stay with ArtPad")
+    a.ex("NAV = nil; ArtPad_MapInput._scripts.OnUpdate(ArtPad_MapInput, 0.016)")
+    check(a.ev(wm + ".ghost:IsShown()") and not a.ev(wm + ".dot:IsShown()"), "the cursor shows the marker about to be placed")
+    map_drag(a, [(0.4, 0.3)])
+    check(n(a) == 1 and item(a, 1, "k") == "r8" and item(a, 1, "x") == 0.4 and item(a, 1, "y") == 0.3, "a click places a marker there")
+    check(a.ev("NAV") is None, "and doesn't travel the map")
+    check(a.ev(wm + ".count") == 1, "it is drawn (one texture)")
+    w.pump(3)
+    check(n(b) == 1 and item(b, 1, "k") == "r8" and item(b, 1, "x") == 0.4 and abs(item(b, 1, "s") - item(a, 1, "s")) < 1e-6,
+          "and reaches a guild mate, same marker, place and size")
+    check(b.ev(wm + ".count") == 1, "who sees it on their open map")
+
+    # Choosing a marker: click the tool again
+    a.ex("CLICK(ArtPad_MapTool_stamp)")
+    check(a.ev("ArtPad_MapMarkers:IsShown()") and not a.ev("ArtPad_MapOptions:IsShown()"), "clicking the stamp in hand opens the markers")
+    map_drag(a, [(0.6, 0.6)])
+    check(n(a) == 1 and not a.ev("ArtPad_MapMarkers:IsShown()"), "a click on the map only closes them")
+    a.ex("CLICK(ArtPad_MapTool_stamp); CLICK(ArtPad_MapMarker_r1)")
+    check(a.ev(wm + ".marker") == "r1" and not a.ev("ArtPad_MapMarkers:IsShown()"), "picking one closes the markers")
+    a.ex("ArtPad:SetBrushSize(12)")
+    map_drag(a, [(0.6, 0.6)])
+    check(n(a) == 2 and item(a, 2, "k") == "r1" and item(a, 2, "s") > item(a, 1, "s") * 2, "the next click places that one, sized by the brush")
+    # Esc closes the markers before putting the tools away
+    a.ex("CLICK(ArtPad_MapTool_stamp)")
+    a.ex("ArtPad:WorldMapEsc()")
+    check(not a.ev("ArtPad_MapMarkers:IsShown()") and a.ev(wm + ".on"), "Esc closes the markers first")
+    # ...and the pen's options and the markers are never open together
+    a.ex("CLICK(ArtPad_MapTool_pen); CLICK(ArtPad_MapTool_pen)")
+    check(a.ev("ArtPad_MapOptions:IsShown()"), "pen options open")
+    a.ex("CLICK(ArtPad_MapTool_stamp); CLICK(ArtPad_MapTool_stamp)")
+    check(a.ev("ArtPad_MapMarkers:IsShown()") and not a.ev("ArtPad_MapOptions:IsShown()"), "one pop-out at a time")
+    a.ex("ArtPad:WorldMapToggleOptions(false)")
+
+    # Markers and strokes live together: eraser, undo, clear, and a late joiner
+    a.ex("CLICK(ArtPad_MapTool_pen)")
+    map_drag(a, ZIG)
+    w.pump(3)
+    check(n(b) == 3 and b.ev(wm + ".count") == 5, f"two markers and a stroke on both maps ({n(b)})")
+    a.ex("CLICK(ArtPad_MapTool_eraser)")
+    a.ex("MAP_CURSOR = { 0.405, 0.3 }; CURSOR_X, CURSOR_Y = 406, 200; ArtPad_MapInput._scripts.OnUpdate(ArtPad_MapInput, 0.016)")
+    check(a.ev(f"{wm}.linesOf[ArtPad_Settings.MapDrawings[37][1]][1].color[2]") == 0.3, "the eraser lights up the marker under it")
+    map_drag(a, [(0.4, 0.3), (0.405, 0.3), (0.41, 0.3)])
+    w.pump(3)
+    check(n(a) == 2 and n(b) == 2 and b.ev(wm + ".count") == 4, "the eraser removes a marker for both")
+    a.ex("ArtPad:WorldMapUndo()")
+    w.pump(3)
+    check(n(b) == 3 and b.ev(wm + ".count") == 5, "undo puts it back for both")
+    map_same(w, 37, "markers and strokes")
+    c = w.add("Cat")
+    c.ex(MAP_SIG)
+    w.pump(4)
+    map_open(c, tools=False)
+    w.pump(6)
+    check(n(c) == 3 and c.ev(wm + ".count") == 5, f"someone joining later gets markers as well as strokes ({n(c)})")
+    kinds = sorted(c.ev(f"ArtPad_Settings.MapDrawings[37][{i}].k") or "stroke" for i in (1, 2, 3))
+    check(kinds == ["r1", "r8", "stroke"], f"the right ones ({kinds})")
+    a.ex("CLICK(ArtPad_MapClear)")
+    w.pump(3)
+    check(n(b) == 0 and n(c) == 0 and b.ev(wm + ".count") == 0, "clear takes markers too")
+
+    # Bad markers from the network are dropped
+    b.ex("""
+        local bad = ArtPad:EncodeData({
+            { "z.1", "M", "nosuchmarker", 5000, 5000, 3000 },
+            { "z.2", "M", "r1", 20000, 5000, 3000 },          -- off the map
+            { "z.3", "M", "r1", "x", 5000, 3000 },
+            { "z.4", "M", "r2", 5000, 5000, 99999999 },       -- kept, size brought into range
+        })
+        ArtPad:OnMapMessage("ArtPadMap1", "A:37:" .. GetServerTime() .. ":" .. bad, "GUILD", "Alice-TestRealm")
+    """)
+    check(n(b) == 1 and item(b, 1, "k") == "r2" and item(b, 1, "s") <= 0.2, f"of four bad markers only the usable one is kept ({n(b)})")
+    check(not any(".lua:" in m for m in a.chat() + b.chat() + c.chat()), "no errors")
 
 
 def test_hide_button():
