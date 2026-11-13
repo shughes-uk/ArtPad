@@ -424,6 +424,7 @@ ArtPad.slashCommands = {
 	stats = function(self) self:PrintStats() end,
 	versions = function(self) self:QueryVersions() end,
 	node = function(self) self:PrintPlaces() end, -- hidden: distances to places
+	dungeon = function(self, arg) self:DungeonCommand(arg) end, -- which dungeon map; WorldMapDraw.lua
 	bench = function(self, arg) self:BenchCommand(arg) end, -- hidden: Debug.lua
 	size = function(self, arg)
 		local n = tonumber(arg)
@@ -488,6 +489,7 @@ function ArtPad.OnSlashCommand(msg)
 		self:Message("/ap resync  - re-download the canvas   /ap clear  - clear locally")
 		self:Message("/ap versions  - list ArtPad versions in your guild and group")
 		self:Message("/ap map  - show/hide the map of where you are   /ap fit  - fit canvas to screen")
+		self:Message("/ap dungeon [name | off]  - show a dungeon's map on the world map")
 		self:Message("/ap resetui  - put the window back to its default size and spot")
 		self:Message("/ap adminonly [on|off]   /ap adminrank <n>")
 		self:Message("/ap names | warnclear | minimap [on|off]")

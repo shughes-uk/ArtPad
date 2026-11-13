@@ -60,6 +60,7 @@ function methods:Hide()
 		if self._scripts.OnHide then self._scripts.OnHide(self) end
 	end
 end
+function methods:SetTexture(t) self._texture = t end
 function methods:SetShown(v) if v then self:Show() else self:Hide() end end
 function methods:IsShown() return self._shown end
 function methods:IsVisible()
@@ -302,6 +303,13 @@ EXPLORED = {
 }
 C_MapExplorationInfo = { GetExploredMapTextures = function() return EXPLORED end }
 LE_PARTY_CATEGORY_INSTANCE = 2
+-- CLIENT.instance = { name = , id = } while inside a dungeon
+function IsInInstance() return CLIENT.instance ~= nil, CLIENT.instance and "party" or "none" end
+function GetInstanceInfo()
+	local i = CLIENT.instance
+	if not i then return "Eastern Kingdoms", "none", 0, "", 0, 0, false, 0 end
+	return i.name, "party", 1, "Normal", 5, 0, false, i.id
+end
 function IsInGroup(cat) if cat == LE_PARTY_CATEGORY_INSTANCE then return false end return CLIENT.group ~= nil end
 function IsInRaid() return CLIENT.group == "raid" end
 function GetNumGroupMembers() return CLIENT.group and #CLIENT.groupMembers or 0 end

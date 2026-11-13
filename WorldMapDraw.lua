@@ -79,6 +79,11 @@ local wm = {
 }
 ArtPad.worldMapDraw = wm
 
+-- The map being looked at: the world map's, or a dungeon's own (see "Dungeon maps").
+local function CurrentMap()
+	return wm.dungeonShown or WorldMapFrame:GetMapID()
+end
+
 --[[ Storage ]]
 
 local function Drawings()
@@ -194,7 +199,7 @@ end
 -- (the stroke list itself was swapped: undo, clear).
 function ArtPad:WorldMapRedraw(force)
 	if not wm.ready then return end
-	local mapID = WorldMapFrame:GetMapID()
+	local mapID = CurrentMap()
 	local W, H = CanvasSize()
 	if not force and mapID == wm.mapID and W == wm.drawnW and H == wm.drawnH then return end
 	for stroke in pairs(wm.linesOf) do ReleaseStroke(stroke) end
@@ -290,7 +295,7 @@ end
 
 local function BeginStroke()
 	local x, y = Cursor()
-	local mapID = WorldMapFrame:GetMapID()
+	local mapID = CurrentMap()
 	local W = CanvasSize()
 	if not x or not mapID or W <= 0 then return end
 	if wm.count >= Budget() then
@@ -324,7 +329,7 @@ end
 
 local function ExtendStroke()
 	local stroke = wm.stroke
-	if not stroke or WorldMapFrame:GetMapID() ~= wm.strokeMap then return end
+	if not stroke or CurrentMap() ~= wm.strokeMap then return end
 	local x, y = Cursor()
 	if not x then return end
 	local W, H = CanvasSize()
@@ -440,6 +445,7 @@ function ArtPad:WorldMapUndo()
 		end
 		PublishAdd(wm.mapID, back)
 	end
+	self:WorldMapUpdateDungeon()
 	self:WorldMapRedraw(true)
 	self:WorldMapRefreshBar()
 end
@@ -739,7 +745,7 @@ end
 -- Ask who has a newer copy of the map on show (at most once a minute per map and audience).
 function ArtPad:WorldMapAsk()
 	if not wm.ready or not WorldMapFrame:IsShown() or wm.catch then return end
-	local channel, mapID = Audience(), WorldMapFrame:GetMapID()
+	local channel, mapID = Audience(), CurrentMap()
 	if not channel or not mapID then return end
 	local key = channel .. ":" .. mapID
 	local now = GetTime()
@@ -772,9 +778,9 @@ end
 
 -- The map on show changed: ask about it once it has stayed up for a moment.
 local function QueueAsk()
-	local mapID = WorldMapFrame:GetMapID()
+	local mapID = CurrentMap()
 	C_Timer.After(ASK_DWELL, function()
-		if WorldMapFrame:IsShown() and WorldMapFrame:GetMapID() == mapID then ArtPad:WorldMapAsk() end
+		if WorldMapFrame:IsShown() and CurrentMap() == mapID then ArtPad:WorldMapAsk() end
 	end)
 end
 
@@ -835,7 +841,7 @@ function ArtPad:OnMapMessage(_, msg, disType, sender)
 			for key in pairs(wm.asked) do
 				if key:match(":(%d+)$") == tostring(mapID) then wm.asked[key] = nil end
 			end
-			if wm.ready and WorldMapFrame:IsShown() and WorldMapFrame:GetMapID() == mapID then QueueAsk() end
+			if wm.ready and WorldMapFrame:IsShown() and CurrentMap() == mapID then QueueAsk() end
 		end
 
 	elseif kind == "H" then
@@ -877,6 +883,194 @@ function ArtPad:SetMapSharing(on)
 	wm.asked = {}
 	wm.catch = nil
 	if on then self:WorldMapAsk() end
+end
+
+
+--[[ Dungeon maps
+
+	The client has the art for dungeon maps but no map entries for them (see DungeonMaps.lua),
+	so inside a known instance ArtPad shows the map itself: its tiles are laid over the world
+	map, above Blizzard's own art and pins, and the drawing goes on top. Each floor is a map
+	of its own for drawing and sharing, under an id no real map uses. A small bar at the top
+	names the dungeon, picks the floor (the game can't tell us which one we are on) and
+	switches back to the world map.
+]]
+
+local DUNGEON_BASE = 5000000 -- drawing ids: DUNGEON_BASE + instance id * 100 + floor
+local ART_LEVEL = 9001 -- just above the highest level the map gives any pin
+local MAP_ART_WIDTH = 1002 -- of the 1024 pixels across four tiles, a map uses this many
+
+-- The dungeon we are in (or were told to show), if it has a map.
+local function FindDungeon()
+	if wm.forced then return wm.forced, wm.forced.name end
+	if not (IsInInstance and IsInInstance()) then return nil end
+	local name, _, _, _, _, _, _, id = GetInstanceInfo()
+	local maps = ArtPad.DUNGEON_MAPS
+	local entry = id and maps[id]
+	if not entry and name then
+		local lower = name:lower()
+		for _, e in pairs(maps) do
+			if e.name:lower() == lower then
+				entry = e
+				break
+			end
+		end
+	end
+	return entry, name
+end
+
+local function LayOutArt()
+	local art = wm.art
+	if not art or not art:IsShown() then return end
+	local W = CanvasSize()
+	if W <= 0 then return end
+	local size = W * 256 / MAP_ART_WIDTH
+	for i, tile in ipairs(art.tiles) do
+		tile:SetSize(size, size)
+		tile:ClearAllPoints()
+		tile:SetPoint("TOPLEFT", art, "TOPLEFT", ((i - 1) % 4) * size, -math.floor((i - 1) / 4) * size)
+	end
+end
+
+local function BuildDungeonArt(canvas)
+	local art = CreateFrame("Frame", "ArtPad_DungeonArt", canvas)
+	art:SetAllPoints(canvas)
+	art:SetFrameLevel(ART_LEVEL)
+	-- The mouse stops here for hovering (no tooltips from pins that can't be seen) but
+	-- clicks and drags still reach the map, so it can be dragged around when zoomed in.
+	art:EnableMouse(true)
+	if art.SetMouseClickEnabled then art:SetMouseClickEnabled(false) end
+	local bg = art:CreateTexture(nil, "BACKGROUND")
+	bg:SetAllPoints()
+	bg:SetColorTexture(0.05, 0.04, 0.03, 1)
+	art.tiles = {}
+	for i = 1, 12 do
+		art.tiles[i] = art:CreateTexture(nil, "ARTWORK")
+	end
+	art:Hide()
+	return art
+end
+
+local function BuildDungeonBar(self, map)
+	local bar = CreateFrame("Frame", "ArtPad_DungeonBar", map)
+	bar:SetFrameStrata("HIGH")
+	bar:SetFrameLevel(500)
+	bar:SetPoint("TOP", map.ScrollContainer, "TOP", 0, -6)
+	bar:EnableMouse(true)
+	bar.bg = bar:CreateTexture(nil, "BACKGROUND")
+	bar.bg:SetAllPoints()
+	bar.bg:SetColorTexture(0.07, 0.06, 0.05, 0.92)
+	bar.label = bar:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+	bar.label:SetPoint("LEFT", 10, 0)
+	bar.floors = {}
+	bar.toggle = self:FlatButton(bar, "ArtPad_DungeonToggle", 96, 22, "World Map", function()
+		wm.dungeonHidden = not wm.dungeonHidden
+		self:WorldMapUpdateDungeon()
+	end)
+	bar:Hide()
+	return bar
+end
+
+local function RefreshDungeonBar(self)
+	local bar, entry = wm.dungeonBar, wm.dungeon
+	if not entry then
+		bar:Hide()
+		return
+	end
+	local shown = not wm.dungeonHidden
+	bar.label:SetText(wm.dungeonName or entry.name)
+	local x = 10 + (bar.label:GetStringWidth() or 120) + 10
+	for i = 1, math.max(#entry, #bar.floors) do
+		local b = bar.floors[i]
+		if i <= #entry and #entry > 1 and shown then
+			if not b then
+				b = self:FlatButton(bar, "ArtPad_DungeonFloor" .. i, 22, 22, tostring(i), function()
+					wm.floor = i
+					self:WorldMapUpdateDungeon()
+				end)
+				bar.floors[i] = b
+			end
+			b:ClearAllPoints()
+			b:SetPoint("LEFT", x, 0)
+			if i == wm.floor then
+				self.Fill(b.bg, self.C.accent, 0.5)
+			else
+				self.Fill(b.bg, { 0.137, 0.157, 0.188 })
+			end
+			b:Show()
+			x = x + 24
+		elseif b then
+			b:Hide()
+		end
+	end
+	if #entry > 1 and shown then x = x + 6 end
+	bar.toggle.label:SetText(shown and "World Map" or "Dungeon Map")
+	bar.toggle:ClearAllPoints()
+	bar.toggle:SetPoint("LEFT", x, 0)
+	bar:SetSize(x + 96 + 6, 30)
+	bar:Show()
+end
+
+-- Show the dungeon's map over the world map, or take it away: called when the map opens,
+-- when we change zone, and from the bar.
+function ArtPad:WorldMapUpdateDungeon()
+	if not wm.ready then return end
+	local entry, name = FindDungeon()
+	if entry ~= wm.dungeon then
+		wm.dungeon, wm.dungeonName = entry, name
+		wm.dungeonHidden, wm.floor = false, 1
+	end
+	local show = entry ~= nil and not wm.dungeonHidden
+	local id = show and (DUNGEON_BASE + entry.id * 100 + wm.floor) or nil
+	if show then
+		for i, tile in ipairs(wm.art.tiles) do tile:SetTexture(entry[wm.floor][i]) end
+	end
+	wm.art:SetShown(show)
+	LayOutArt()
+	-- the drawing and the mouse catcher go above the art; without it, back among the pins
+	wm.layer:SetFrameLevel(show and ART_LEVEL + 1 or wm.baseLevel)
+	wm.input:SetFrameLevel(show and ART_LEVEL + 2 or 9000)
+	RefreshDungeonBar(self)
+	if id ~= wm.dungeonShown then
+		EndGesture() -- a drag doesn't carry over to another map
+		wm.dungeonShown = id
+		self:WorldMapRedraw()
+		self:WorldMapRefreshBar()
+		QueueAsk()
+	end
+end
+
+-- /ap dungeon: say which instance this is and whether it has a map.
+-- /ap dungeon <id>: show that instance's map wherever you are; /ap dungeon off: stop.
+function ArtPad:DungeonCommand(arg)
+	arg = (arg or ""):lower()
+	if arg == "off" then
+		wm.forced = nil
+	elseif arg ~= "" then
+		local entry = self.DUNGEON_MAPS[tonumber(arg) or 0]
+		if not entry then
+			for _, e in pairs(self.DUNGEON_MAPS) do
+				if e.name:lower():find(arg, 1, true) then entry = e end
+			end
+		end
+		if not entry then
+			self:Message("No dungeon map for \"" .. arg .. "\".")
+			return
+		end
+		wm.forced = entry
+		self:Message(("Showing %s on the world map. /ap dungeon off to stop."):format(entry.name))
+	else
+		local inside = IsInInstance and IsInInstance()
+		local name, _, _, _, _, _, _, id = GetInstanceInfo()
+		if not inside then
+			self:Message("You are not in a dungeon.")
+		else
+			self:Message(("%s (instance %s): %s"):format(tostring(name), tostring(id),
+				FindDungeon() and "has a map" or "no map"))
+		end
+		return
+	end
+	self:WorldMapUpdateDungeon()
 end
 
 --[[ The cursor shows the tool ]]
@@ -1420,8 +1614,13 @@ function ArtPad:SetupWorldMapDraw()
 
 	local layer = CreateFrame("Frame", "ArtPad_MapLayer", canvas)
 	layer:SetAllPoints(canvas)
-	layer:SetFrameLevel(DrawingLevel(map))
-	layer:SetScript("OnSizeChanged", function() self:WorldMapRedraw() end)
+	wm.baseLevel = DrawingLevel(map)
+	layer:SetFrameLevel(wm.baseLevel)
+	layer:SetScript("OnSizeChanged", function()
+		LayOutArt()
+		self:WorldMapRedraw()
+	end)
+	wm.art = BuildDungeonArt(canvas)
 	wm.layer = layer
 
 	local input = CreateFrame("Frame", "ArtPad_MapInput", canvas)
@@ -1500,6 +1699,7 @@ function ArtPad:SetupWorldMapDraw()
 	PlaceEntry(map)
 	wm.bar = BuildBar(self, map)
 	wm.hint = BuildHint(map)
+	wm.dungeonBar = BuildDungeonBar(self, map)
 
 	wm.ready = true
 
@@ -1518,6 +1718,7 @@ function ArtPad:SetupWorldMapDraw()
 	end
 	map:HookScript("OnShow", function()
 		PlaceEntry(map)
+		self:WorldMapUpdateDungeon()
 		self:WorldMapRedraw()
 		self:WorldMapUpdateInput()
 		QueueAsk()
@@ -1532,8 +1733,12 @@ function ArtPad:SetupWorldMapDraw()
 	events:RegisterEvent("MODIFIER_STATE_CHANGED")
 	events:RegisterEvent("PLAYER_REGEN_DISABLED")
 	events:RegisterEvent("PLAYER_REGEN_ENABLED")
+	events:RegisterEvent("PLAYER_ENTERING_WORLD")
+	events:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 	events:SetScript("OnEvent", function(_, event)
-		if event == "PLAYER_REGEN_DISABLED" then
+		if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+			self:WorldMapUpdateDungeon() -- into or out of a dungeon
+		elseif event == "PLAYER_REGEN_DISABLED" then
 			-- Combat is about to lock bindings: give Esc and Ctrl-Z back now, so they can
 			-- never be stuck on a toolbar that gets put away mid-fight.
 			ClearOverrideBindings(wm.bar)

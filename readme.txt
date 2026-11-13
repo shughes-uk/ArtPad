@@ -19,6 +19,11 @@ Drawing on the world map: click the round pencil button on the world map, or hol
 drag on the map. Each map has one drawing, shared with the same people as the canvas (your
 guild, or your party / raid) and kept between sessions. Options has a switch to stop sharing.
 
+Dungeon maps: inside a dungeon or raid ArtPad shows its map over the world map (the game has
+the art but doesn't show it), with the shared drawing on top. A bar at the top picks the
+floor and switches back to the world map. /ap dungeon <name> shows one from anywhere;
+/ap dungeon off puts it away.
+
 Drag the title bar to move the window and the bottom-right corner to resize it. The pill in
 the title bar shows who you're sharing with; click it to switch or to hide your name.
 

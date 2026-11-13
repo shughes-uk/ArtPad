@@ -2922,6 +2922,104 @@ def test_world_map_sharing_follows_the_canvas():
     check(not any(".lua:" in m for m in q.chat()), "and nothing errors")
 
 
+def enter_dungeon(c, name, iid):
+    c.ex("CLIENT.instance = { name = %r, id = %d }; FIRE_EVENT('PLAYER_ENTERING_WORLD')" % (name, iid))
+
+
+def leave_dungeon(c):
+    c.ex("CLIENT.instance = nil; FIRE_EVENT('PLAYER_ENTERING_WORLD')")
+
+
+def test_dungeon_maps():
+    """The client has dungeon map art but no map entries for dungeons: ArtPad shows it."""
+    w = World()
+    p, q = w.add("Pat", guild=False), w.add("Quin", guild=False)
+    for c in (p, q):
+        c.ex('ArtPad:SetMode("RAID")')
+        c.ex(MAP_SIG)
+    w.group("party", "Pat", "Quin")
+    settle(w)
+    n = lambda c, m: c.ev(f"MAP_N({m})")
+    wm = "ArtPad.worldMapDraw"
+
+    # Out in the world: nothing of this shows
+    map_open(p)
+    check(not p.ev("ArtPad_DungeonArt:IsShown()") and not p.ev("ArtPad_DungeonBar:IsShown()"), "no dungeon map out in the world")
+    base = p.ev("ArtPad_MapLayer:GetFrameLevel()")
+    p.ex("WorldMapFrame:Hide()")
+
+    # Inside the Stockade: its map is laid over the world map, with the drawing on top
+    enter_dungeon(p, "Stormwind Stockade", 34)
+    map_open(p)
+    w.pump(3)
+    check(p.ev("ArtPad_DungeonArt:IsShown()"), "inside a dungeon, its map is shown")
+    check(p.ev("ArtPad_DungeonArt.tiles[1]._texture") == p.ev("ArtPad.DUNGEON_MAPS[34][1][1]"), "from the dungeon's own art")
+    check(p.ev("#ArtPad_DungeonArt.tiles") == 12 and p.ev("ArtPad_DungeonArt.tiles[12]._texture") != p.ev("ArtPad_DungeonArt.tiles[1]._texture"),
+          "twelve tiles of it")
+    w1 = p.ev("ArtPad_DungeonArt.tiles[1]:GetWidth()")
+    check(abs(w1 - 256) < 0.01, f"at the map's own scale ({w1})")
+    art, layer, catcher = (p.ev(f"{f}:GetFrameLevel()") for f in ("ArtPad_DungeonArt", "ArtPad_MapLayer", "ArtPad_MapInput"))
+    check(9000 < art < layer < catcher, f"above Blizzard's pins, with the drawing and the mouse catcher above it ({art}, {layer}, {catcher})")
+    check(p.ev("ArtPad_DungeonBar:IsShown()") and p.ev("ArtPad_DungeonBar.label._text") == "Stormwind Stockade", "a bar names the dungeon")
+    check(not p.ev("ArtPad_DungeonFloor1 and ArtPad_DungeonFloor1:IsShown()"), "one floor: no floor buttons")
+
+    # Drawing there is the dungeon's own, and the party shares it
+    stockade = 5000000 + 34 * 100 + 1
+    map_drag(p, ZIG)
+    w.pump(3)
+    check(n(p, stockade) == 1 and n(p, 37) == 0, "a stroke goes on the dungeon's map, not the zone underneath")
+    check(n(q, stockade) == 1, "and reaches the party")
+    enter_dungeon(q, "Stormwind Stockade", 34)
+    map_open(q, tools=False)
+    w.pump(3)
+    check(q.ev(wm + ".count") == 3, "who see it on their own dungeon map")
+
+    # Back to the world map and in again
+    p.ex("CLICK(ArtPad_DungeonToggle)")
+    check(not p.ev("ArtPad_DungeonArt:IsShown()") and p.ev(wm + ".count") == 0 and p.ev("ArtPad_MapLayer:GetFrameLevel()") == base,
+          "the bar switches to the world map: art away, the zone's own drawing shown")
+    check(p.ev("ArtPad_DungeonToggle.label._text") == "Dungeon Map" and p.ev("ArtPad_DungeonBar:IsShown()"), "and offers the way back")
+    p.ex("CLICK(ArtPad_DungeonToggle)")
+    check(p.ev("ArtPad_DungeonArt:IsShown()") and p.ev(wm + ".count") == 3, "back on the dungeon map, drawing and all")
+
+    # Leaving the dungeon puts everything back
+    leave_dungeon(p)
+    check(not p.ev("ArtPad_DungeonArt:IsShown()") and not p.ev("ArtPad_DungeonBar:IsShown()"), "leaving the dungeon takes its map away")
+    check(p.ev("ArtPad_MapLayer:GetFrameLevel()") == base and p.ev("ArtPad_MapInput:GetFrameLevel()") == 9000, "and the layers return to their places")
+
+    # Floors: each is a map of its own
+    enter_dungeon(p, "Deadmines", 36)
+    w.pump(3)
+    check(p.ev("ArtPad_DungeonFloor1:IsShown()") and p.ev("ArtPad_DungeonFloor2:IsShown()") and not p.ev("ArtPad_DungeonFloor3"),
+          "two floors: two floor buttons")
+    first = p.ev("ArtPad_DungeonArt.tiles[1]._texture")
+    map_drag(p, zig(0.2))
+    p.ex("CLICK(ArtPad_DungeonFloor2)")
+    w.pump(3)
+    check(p.ev("ArtPad_DungeonArt.tiles[1]._texture") != first and p.ev(wm + ".count") == 0, "the second floor has its own art and its own drawing")
+    map_drag(p, zig(0.3))
+    w.pump(3)
+    check(n(p, 5003601) == 1 and n(p, 5003602) == 1 and n(q, 5003602) == 1, "kept and shared per floor")
+
+    # A dungeon is also recognised by name, should its id not be the expected one
+    enter_dungeon(p, "Molten Core", 99999)
+    check(p.ev("ArtPad_DungeonArt:IsShown()") and p.ev("ArtPad_DungeonBar.label._text") == "Molten Core", "recognised by name")
+    # One without art: the world map as it was
+    enter_dungeon(p, "Karazhan Crypts", 12345)
+    check(not p.ev("ArtPad_DungeonArt:IsShown()") and not p.ev("ArtPad_DungeonBar:IsShown()"), "a dungeon with no art shows nothing extra")
+    p.ex("ArtPad.OnSlashCommand('dungeon')")
+    check(any("Karazhan Crypts" in m and "no map" in m for m in p.chat()), "/ap dungeon says so")
+    leave_dungeon(p)
+
+    # /ap dungeon <name> shows one from anywhere
+    p.ex("ArtPad.OnSlashCommand('dungeon stockade')")
+    check(p.ev("ArtPad_DungeonArt:IsShown()") and p.ev("ArtPad_DungeonBar.label._text") == "Stormwind Stockade", "/ap dungeon <name> shows a map from anywhere")
+    check(p.ev(wm + ".count") == 3, "with what was drawn on it")
+    p.ex("ArtPad.OnSlashCommand('dungeon off')")
+    check(not p.ev("ArtPad_DungeonArt:IsShown()"), "/ap dungeon off puts it away")
+    check(not any(".lua:" in m for m in p.chat()), "no errors")
+
+
 def test_hide_button():
     w = World()
     a = w.add("Alice")
