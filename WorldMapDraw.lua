@@ -841,7 +841,10 @@ local function UpdatePropagation()
 	local input = wm.input
 	if not input.SetPropagateMouseClicks or InCombatLockdown() then return end
 	local container = WorldMapFrame.ScrollContainer
-	local pannable = container.CanPan and container:CanPan() or false
+	-- (Blizzard's CanPan compares against a scale the map only has once it has been opened:
+	-- asked before that - leaving combat, say - it throws. Then nothing can be panned.)
+	local asked, pannable = pcall(function() return container.CanPan and container:CanPan() end)
+	pannable = asked and pannable or false
 	local want = Tool() == "pen" and not pannable and not wm.bar.options:IsShown() and not wm.bar.markers:IsShown()
 		and not wm.bar.sharing:IsShown()
 	if want ~= wm.propagating and pcall(input.SetPropagateMouseClicks, input, want) then

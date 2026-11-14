@@ -409,7 +409,15 @@ WorldMapFrame.ScrollContainer = CreateFrame("ScrollFrame", nil, WorldMapFrame)
 WorldMapFrame.ScrollContainer.Child = CreateFrame("Frame", nil, WorldMapFrame.ScrollContainer)
 WorldMapFrame.ScrollContainer.Child:SetSize(1002, 668)
 function WorldMapFrame.ScrollContainer:ShouldNavigateOnClick() return true end
-function WorldMapFrame.ScrollContainer:CanPan() return MAP_ZOOMED == true end -- zoomed in: drags pan
+-- (as in Blizzard's MapCanvasScrollControllerMixin:CanPan: baseScale is nil until the map has been shown once)
+function WorldMapFrame.ScrollContainer:CanPan() return (MAP_ZOOMED == true and 2 or 1) > self.baseScale end -- zoomed in: drags pan
+do
+	local show = WorldMapFrame.Show
+	function WorldMapFrame:Show()
+		self.ScrollContainer.baseScale = 1
+		show(self)
+	end
+end
 function WorldMapFrame.ScrollContainer:ShouldNavigateIgnoreZoneMapPositionData() return false end
 MAP_CURSOR = { 0.5, 0.5 }
 function WorldMapFrame.ScrollContainer:GetNormalizedCursorPosition() return MAP_CURSOR[1], MAP_CURSOR[2] end

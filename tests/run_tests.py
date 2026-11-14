@@ -3351,6 +3351,31 @@ def test_world_map_sharing_button():
     check(not any(".lua:" in m for m in a.chat()), "no errors")
 
 
+def test_world_map_untouched_before_it_opens():
+    """Blizzard's map has no scale until it has been opened once: nothing may ask it things before then."""
+    w = World()
+    a, b = w.add("Alice"), w.add("Bob")
+    settle(w)
+    check(a.ev("WorldMapFrame.ScrollContainer.baseScale") is None, "the map has never been opened this session")
+    # leaving combat, a group forming, a zone change, a friend's stroke arriving: all before the map opens
+    a.ex("FIRE_EVENT('PLAYER_REGEN_DISABLED'); IN_COMBAT = true")
+    a.ex("IN_COMBAT = nil; FIRE_EVENT('PLAYER_REGEN_ENABLED')")
+    a.ex("FIRE_EVENT('GROUP_ROSTER_UPDATE'); FIRE_EVENT('PLAYER_GUILD_UPDATE'); FIRE_EVENT('ZONE_CHANGED_NEW_AREA')")
+    a.ex("FIRE_EVENT('MODIFIER_STATE_CHANGED')")
+    a.ex("ArtPad.OnSlashCommand('raid'); ArtPad.OnSlashCommand('guild'); ArtPad:SetMapSharing(false); ArtPad:SetMapSharing(true)")
+    a.ex("ArtPad:SetMapBrush(false); ArtPad:SetMapBrush(true); ArtPad:WorldMapUndo(); ArtPad:WorldMapEsc()")
+    map_open(b)
+    b.ex(MAP_SIG)
+    w.pump(3)
+    map_drag(b, ZIG)
+    w.pump(3)
+    a.ex(MAP_SIG)
+    check(a.ev("MAP_N(37)") == 1, "a stroke that arrives before the map has been opened is kept")
+    check(not any(".lua:" in m for m in a.chat()), "and none of it raised an error")
+    map_open(a)
+    check(a.ev("ArtPad.worldMapDraw.propagating"), "once the map opens, the tools work as usual")
+
+
 def test_hide_button():
     w = World()
     a = w.add("Alice")
