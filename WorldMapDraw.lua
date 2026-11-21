@@ -344,6 +344,13 @@ local function Ribbon(own, xs, ys, n, width, perUnit, r, g, b, a, sublevel, capS
 	return true
 end
 
+-- A dot (see PlaceDot) is kept as the shortest of lines: two points level with each other, as
+-- far apart as the line is wide.
+local function IsDot(stroke)
+	local p = stroke.p
+	return #p == 4 and p[2] == p[4] and math.abs((p[3] - p[1]) - stroke.w) < 0.0003
+end
+
 -- Draw a stroke's knots [first, last] with the brush: the outline, then the ink over it.
 -- `smooth` joins them with the curve (a finished stroke); otherwise they are joined directly
 -- (a stroke still being drawn has a point every few pixels: it is smooth as it is).
@@ -362,6 +369,13 @@ local function DrawInk(stroke, W, H, first, last, capStart, capEnd, smooth)
 	end
 	if smooth then xs, ys, n = Curve(xs, ys, n, CURVE_ERROR * unit) end
 	local width = math.max(0.5, stroke.w * W)
+	if IsDot(stroke) then
+		-- one round disc on its outline, whatever the ink's opacity
+		local x, y = (xs[1] + xs[n]) / 2, ys[1]
+		local r, g, b, a = OutlineColour(stroke.r, stroke.g, stroke.b)
+		return Disc(own, x, y, width + 2 * OUTLINE * unit, 1 / unit, r, g, b, a * stroke.a, 0)
+			and Disc(own, x, y, width, 1 / unit, stroke.r, stroke.g, stroke.b, stroke.a, 1)
+	end
 	-- round ends and joins overlap the ribbon, which shows in see-through ink: it goes without
 	local round = stroke.a >= 0.95
 	local r, g, b, a = OutlineColour(stroke.r, stroke.g, stroke.b)
@@ -672,6 +686,50 @@ local function ExtendStroke()
 		DrawSegment(stroke, n - 1, W, H)
 	end
 	if n == 2 then ArtPad:WorldMapRefreshBar() end
+end
+
+-- Would a click here take the map somewhere else? (As Blizzard's map decides it: see
+-- MapCanvasMixin:NavigateToCursor.) On most zone maps it wouldn't.
+local function WouldNavigate()
+	if wm.dungeonShown then return false end -- a dungeon's map has nowhere to go
+	local container = WorldMapFrame.ScrollContainer
+	local ok, elsewhere = pcall(function()
+		local mapID = WorldMapFrame:GetMapID()
+		local x, y = container:GetNormalizedCursorPosition()
+		local ignoreZone = container.ShouldNavigateIgnoreZoneMapPositionData
+			and container:ShouldNavigateIgnoreZoneMapPositionData() or false
+		local info = C_Map.GetMapInfoAtPosition(mapID, x, y, ignoreZone)
+		return info ~= nil and info.mapID ~= mapID
+	end)
+	return not ok or elsewhere -- (when in doubt the click is the map's)
+end
+
+-- A click with the pen where the map has nowhere to go leaves a dot. It is kept as the
+-- shortest of lines, as long as it is wide, so that it is shared like any stroke and a
+-- version without the brush still shows it (as a small square).
+local function PlaceDot()
+	local x, y = Cursor()
+	local mapID = CurrentMap()
+	local W, H = CanvasSize()
+	if not x or not mapID or W <= 0 then return end
+	if wm.count >= Budget() then
+		WarnFull()
+		return
+	end
+	local c = ArtPad.brushColor
+	local w = Round(ArtPad_Settings.BrushSize * UnitsPerPixel() / W)
+	local left = Round(math.max(0, math.min(1 - w, x - w / 2)))
+	local stroke = {
+		id = NewId(), u = true, r = c.r, g = c.g, b = c.b, a = c.a, w = w,
+		p = { left, Round(y), Round(left + w), Round(y) },
+	}
+	table.insert(Strokes(mapID, true), stroke)
+	Record(mapID, { add = { stroke } })
+	if mapID == wm.mapID then DrawStroke(stroke, W, H) end
+	PublishAdd(mapID, { stroke })
+	ArtPad_Settings.MapHintSeen = true
+	ArtPad:WorldMapHint(false)
+	ArtPad:WorldMapRefreshBar()
 end
 
 -- How big a marker is on screen: it follows the brush size, as on the canvas.
@@ -2211,7 +2269,7 @@ function ArtPad:SetupWorldMapDraw()
 	input:SetScript("OnMouseDown", function(_, button)
 		if button ~= "LeftButton" and button ~= "RightButton" then return end
 		local sx, sy = GetCursorPosition()
-		wm.press = { button = button, x = sx, y = sy }
+		wm.press = { button = button, x = sx, y = sy, tool = Tool() }
 		local closed = false
 		if wm.bar.options:IsShown() or wm.bar.markers:IsShown() or wm.bar.sharing:IsShown() then
 			-- this click only closes the options; it is not the map's
@@ -2235,10 +2293,14 @@ function ArtPad:SetupWorldMapDraw()
 		local press = wm.press
 		local moved = PressMoved()
 		EndGesture()
-		-- A press that did nothing is a click. If it didn't reach the map by itself, pass it on.
-		if press and press.button == button and not press.acted and not moved
-				and not (wm.propagating and button == "LeftButton") then
-			PassClick(button)
+		-- A press that did nothing is a click. With the pen, where the map has nowhere to go,
+		-- it leaves a dot. Otherwise it is the map's: if it didn't reach the map by itself, pass it on.
+		if press and press.button == button and not press.acted and not moved then
+			if button == "LeftButton" and press.tool == "pen" and not WouldNavigate() then
+				PlaceDot()
+			elseif not (wm.propagating and button == "LeftButton") then
+				PassClick(button)
+			end
 		end
 	end)
 	input:SetScript("OnUpdate", function()

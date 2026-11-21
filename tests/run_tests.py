@@ -3376,6 +3376,78 @@ def test_world_map_untouched_before_it_opens():
     check(a.ev("ArtPad.worldMapDraw.propagating"), "once the map opens, the tools work as usual")
 
 
+def test_world_map_dots():
+    """A click with the pen leaves a dot, wherever the click wouldn't take the map somewhere else."""
+    w = World()
+    a = w.add("Alice", login=False)
+    a.ex("BRUSH_FOUND = true")
+    a.login()
+    b = w.add("Bob")                 # no brush: plain lines
+    settle(w)
+    for c in (a, b):
+        c.ex(MAP_SIG)
+    wm = "ArtPad.worldMapDraw"
+    n = lambda c, m=37: c.ev(f"MAP_N({m})")
+    map_open(a)
+    map_open(b, tools=False)
+    w.pump(3)
+
+    # On a map where a click travels (a continent, say), a click is still the map's
+    a.ex("NAV = nil")
+    map_drag(a, [(0.4, 0.4)])
+    check(n(a) == 0, "where a click would open another map, it draws nothing")
+
+    # On a map with nowhere to go, it leaves a dot
+    a.ex("MAP_NOWHERE = true; ArtPad:SetColor(0.9, 0.2, 0.15, 1); ArtPad:SetBrushSize(6)")
+    map_drag(a, [(0.4, 0.4)])
+    check(n(a) == 1, "a click with the pen leaves a dot")
+    p = [a.ev(f"ArtPad_Settings.MapDrawings[37][1].p[{i}]") for i in range(1, 5)]
+    width = a.ev("ArtPad_Settings.MapDrawings[37][1].w")
+    check(a.ev("#ArtPad_Settings.MapDrawings[37][1].p") == 4 and p[1] == p[3] == 0.4 and abs((p[2] - p[0]) - width) < 1e-9 and abs((p[0] + p[2]) / 2 - 0.4) < 2e-4,
+          f"kept as the shortest of lines, as long as it is wide, centred on the click ({p})")
+    regions = a.ev(f"#{wm}.linesOf[ArtPad_Settings.MapDrawings[37][1]]")
+    discs = a.ev(f"(function() local k = 0 for _, r in ipairs({wm}.linesOf[ArtPad_Settings.MapDrawings[37][1]]) do if r.piece and not r._vo then k = k + 1 end end return k end)()")
+    check(regions == 2 and discs == 2, f"the brush draws it as one round disc on its outline ({regions} pieces)")
+    check(a.ev("NAV") is None, "and the map goes nowhere")
+    w.pump(3)
+    check(n(b) == 1 and b.ev(wm + ".count") == 1, "a guild mate gets it; without the brush it is one short line")
+    map_same(w, 37, "a dot")
+
+    # See-through ink still gets its dot; a wobbly click is a dot too
+    a.ex("ArtPad:SetColor(0.2, 0.5, 1, 0.5)")
+    map_drag(a, [(0.5, 0.4), (0.5025, 0.4)])
+    check(n(a) == 2 and a.ev(f"#{wm}.linesOf[ArtPad_Settings.MapDrawings[37][2]]") == 2, "see-through ink too, and a slightly wobbly click")
+    # A drag is still a stroke
+    map_drag(a, ZIG)
+    check(n(a) == 3 and a.ev("#ArtPad_Settings.MapDrawings[37][3].p") > 4, "a drag is still a stroke")
+
+    # Eraser and undo treat it like any stroke; the eraser and the stamp don't leave dots
+    a.ex("CLICK(ArtPad_MapTool_eraser)")
+    map_drag(a, [(0.8, 0.8)])
+    check(n(a) == 3, "a click with the eraser leaves nothing")
+    map_drag(a, [(0.4, 0.4), (0.401, 0.4), (0.402, 0.4)])
+    w.pump(3)
+    check(n(a) == 2 and n(b) == 2, "the eraser removes a dot, for both")
+    a.ex("ArtPad:WorldMapUndo()")
+    w.pump(3)
+    check(n(a) == 3 and n(b) == 3, "and undo puts it back")
+    a.ex("CLICK(ArtPad_MapTool_pen)")
+
+    # Zoomed in, the pen keeps its presses: a click is still a dot, and nothing is passed to the map
+    a.ex("NAV = nil; MAP_ZOOMED = true; WorldMapFrame:OnCanvasScaleChanged()")
+    map_drag(a, [(0.6, 0.6)])
+    check(n(a) == 4 and a.ev("NAV") is None, "zoomed in: still a dot")
+    a.ex("MAP_ZOOMED = nil; WorldMapFrame:OnCanvasScaleChanged()")
+
+    # On a dungeon's own map a click is always a dot
+    a.ex("MAP_NOWHERE = nil")
+    enter_dungeon(a, "Stormwind Stockade", 34)
+    w.pump(2)
+    map_drag(a, [(0.3, 0.3)])
+    check(a.ev("MAP_N(5003401)") == 1, "on a dungeon map a click is a dot")
+    check(not any(".lua:" in m for m in a.chat() + b.chat()), "no errors")
+
+
 def test_hide_button():
     w = World()
     a = w.add("Alice")

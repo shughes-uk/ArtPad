@@ -287,6 +287,11 @@ function GetScreenHeight() return 1080 end
 -- Where this client stands: CLIENT.mapPos = { map = id, x = 0-1, y = 0-1 } (nil: nowhere)
 MAP_YARDS = { [37] = { 3470.84, 2314.62 }, [1429] = { 3470.84, 2314.62 } }
 C_Map = {
+	-- the map a click at (x, y) would open: a zone, unless the test says this map has nowhere to go
+	GetMapInfoAtPosition = function(mapID)
+		if MAP_NOWHERE then return nil end
+		return { mapID = mapID + 1000 }
+	end,
 	GetBestMapForUnit = function() return CLIENT.mapPos and CLIENT.mapPos.map or MAP_ID end,
 	GetPlayerMapPosition = function(mapID, unit)
 		local p = CLIENT.mapPos

@@ -21,6 +21,9 @@ and roles; click the stamp again to choose one), and at its end a button that sa
 the map's drawings and lets you choose: Guild, Party / Raid, or Only Me. Each map has one
 drawing, shared with the same people as the canvas and kept between sessions.
 
+A click with the pen leaves a dot, except where the click would take the map somewhere else
+(into a zone from a continent map, say): there it is still the map's.
+
 Map strokes are drawn with a brush: curved through your points, with soft edges, round ends
 and an outline that keeps them readable on any part of a map. It appears after the game has
 been restarted once (it uses a new texture). Options has "Smooth strokes on the world map"
